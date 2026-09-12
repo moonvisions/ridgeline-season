@@ -1,0 +1,8 @@
+# Keep Vercel away from the multiplayer server. It is a long-running Node
+# process and must never be treated as a serverless function.
+server/
+server.js
+package.json
+package-lock.json
+node_modules/
+*.md
