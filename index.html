@@ -75,6 +75,28 @@
     letter-spacing:2px;text-transform:uppercase;color:var(--faint)}
   .tFoot i{width:4px;height:4px;background:var(--faint);border-radius:50%;display:inline-block}
 
+  /* ---- pause: a small chip top-left, out of the HUD's way ---- */
+  #pauseBtn{position:fixed;z-index:8;display:none;align-items:center;justify-content:center;gap:4px;
+    top:calc(10px + env(safe-area-inset-top));left:calc(10px + env(safe-area-inset-left));
+    width:42px;height:42px;margin:0;padding:0;border-radius:50%;cursor:pointer;
+    background:rgba(10,16,12,.55);border:1px solid rgba(255,255,255,.28);box-shadow:0 3px 10px rgba(0,0,0,.4);
+    backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+    transition:background .14s,border-color .14s,transform .08s}
+  #pauseBtn.on{display:flex}
+  #pauseBtn span{display:block;width:4px;height:15px;border-radius:1px;background:#eef1ec}
+  #pauseBtn:hover{background:rgba(255,106,31,.28);border-color:var(--blaze)}
+  #pauseBtn:active{transform:scale(.92)}
+  #pauseMenu{z-index:11;align-items:center;justify-content:center}
+  .pauseCard{max-width:430px;text-align:left;padding:clamp(24px,4vh,40px) clamp(22px,4vw,38px) 34px}
+  .pKicker{font-family:var(--type);font-size:10px;letter-spacing:3.4px;text-transform:uppercase;
+    color:var(--blaze);margin-bottom:10px}
+  #pauseMenu h1{font-size:clamp(30px,6vw,44px)}
+  #pauseMenu h1::after{width:72px;height:3px;margin-top:12px}
+  #pauseMenu .row{margin-top:18px}
+  #pauseMenu .stat b{font-size:22px}
+  #pauseMenu button{margin-top:12px}
+  #pResume{margin-top:22px}
+
   /* ===================== LODGE ===================== */
   /* The menu is the world with a scrim over it — no floating dialog. Same
      construction as the title screen: layered gradients, content sitting
@@ -276,6 +298,16 @@
     #bBreath{right:112px;bottom:108px;width:58px;height:58px;font-size:9.5px}
     #bAim{left:calc(150px + env(safe-area-inset-left));bottom:calc(30px + env(safe-area-inset-bottom));width:64px;height:64px;font-size:11px}
   }
+  /* phones under ~360px: tighten the cluster so nothing touches */
+  @media (orientation:portrait) and (max-width:370px){
+    #joy{left:10px;bottom:calc(18px + env(safe-area-inset-bottom));width:110px;height:110px}
+    #joyKnob{left:31px;top:31px}
+    #bFire{right:10px;bottom:calc(86px + env(safe-area-inset-bottom));width:78px;height:78px;font-size:13px}
+    #bReload{right:10px;bottom:calc(18px + env(safe-area-inset-bottom));width:54px;height:54px;font-size:9px}
+    #bSwap{right:72px;bottom:calc(18px + env(safe-area-inset-bottom));width:50px;height:50px;font-size:8.5px}
+    #bBreath{right:96px;bottom:calc(96px + env(safe-area-inset-bottom));width:52px;height:52px;font-size:8.5px}
+    #bAim{left:126px;bottom:calc(22px + env(safe-area-inset-bottom));width:56px;height:56px;font-size:10px}
+  }
 
   @media (max-width:620px){
     .overlay.title{align-items:flex-end;
@@ -292,6 +324,8 @@
     .overlay{background:
       radial-gradient(90% 40% at 60% 4%, rgba(255,106,31,.10), transparent 70%),
       linear-gradient(180deg, rgba(5,9,7,.90) 0%, rgba(5,9,7,.93) 40%, rgba(4,7,5,.96) 100%)}
+    #pauseBtn{width:38px;height:38px;top:calc(8px + env(safe-area-inset-top));
+      left:calc(8px + env(safe-area-inset-left))}
     .card{padding:22px 18px 56px}
     .backBtn{padding:11px 14px;font-size:11.5px;margin-bottom:14px}
     h1{font-size:32px;letter-spacing:-1px}
@@ -324,6 +358,21 @@
   <div class="tbtn" id="bSwap">SWAP<br>GUN</div>
   <div class="tbtn" id="bReload">RELOAD</div>
   <div class="tbtn" id="bBreath">HOLD<br>BREATH</div>
+</div>
+
+<button id="pauseBtn" aria-label="Pause"><span></span><span></span></button>
+
+<div class="overlay hidden" id="pauseMenu">
+  <div class="card pauseCard">
+    <div class="pKicker" id="pWhere">The ridge</div>
+    <h1 id="pTitle">Paused</h1>
+    <p id="pLine">Nothing moves while you are here.</p>
+    <div class="row" id="pStats"></div>
+    <button id="pResume">Resume hunt</button>
+    <button id="pEnd" class="ghost">End hunt &amp; see results</button>
+    <button id="pQuit" class="ghost">Quit to main menu</button>
+    <p style="font-size:12px;color:var(--faint);margin-top:14px">Press <kbd>Esc</kbd> to resume</p>
+  </div>
 </div>
 
 <div class="overlay title" id="title">
@@ -1971,7 +2020,7 @@ cv.addEventListener('mousedown',e=>{ if(!running)return; e.preventDefault(); use
   if(e.button===0)fire();
   // Right button TOGGLES the scope rather than being held. Holding it made the
   // browser's context menu appear and stole the mouse out of the game.
-  if(e.button===2&&!(COND&&COND.id==='iron'))scoped=!scoped; });
+  if(e.button===2){ if(COND&&COND.id==='iron')noScopeNote(); else scoped=!scoped; } });
 cv.addEventListener('mouseup',e=>{ if(e.button===2)e.preventDefault(); });
 // Block the context menu across the whole page while playing, not just on the
 // canvas — a stray right-click anywhere used to break mouse capture.
@@ -2009,7 +2058,7 @@ function keyNames(e){
   const k=(e.key||'').toLowerCase();
   const alias={w:'KeyW',a:'KeyA',s:'KeyS',d:'KeyD',r:'KeyR',c:'KeyC',f:'KeyF',q:'KeyQ',
     arrowup:'ArrowUp',arrowdown:'ArrowDown',arrowleft:'ArrowLeft',arrowright:'ArrowRight',
-    ' ':'Space',spacebar:'Space',enter:'Enter','1':'Digit1','2':'Digit2',shift:'ShiftLeft'};
+    ' ':'Space',spacebar:'Space',enter:'Enter','1':'Digit1','2':'Digit2',shift:'ShiftLeft',escape:'Escape',esc:'Escape'};
   if(alias[k]&&!out.includes(alias[k]))out.push(alias[k]);
   return out;
 }
@@ -2021,6 +2070,8 @@ function onKeyDown(e){
   lastKeySeen=names.join('/')+' ('+(e.key||'?')+')';
   const has=c=>names.includes(c);
   if(has('ArrowUp')||has('ArrowDown')||has('ArrowLeft')||has('ArrowRight')||has('Space'))e.preventDefault();
+  if(has('Escape')){ if(paused)resumeGame(); else if(canPause())pauseGame(); return; }
+  if(paused)return;
   if(!running)return;
   if(has('KeyR'))reload();
   if(has('Space'))breathHold=true;
@@ -2028,7 +2079,7 @@ function onKeyDown(e){
   if(has('Digit1')&&!(LV&&LV.bowOnly&&mode==='hunt'))weapon='rifle';
   if(has('Digit2'))weapon='bow';
   if(has('KeyQ'))swapWeapon();
-  if(has('KeyF')&&!(COND&&COND.id==='iron'))scoped=!scoped;
+  if(has('KeyF')){ if(COND&&COND.id==='iron')noScopeNote(); else scoped=!scoped; }
   if(has('KeyH')&&running&&provLeft>0&&health<100){ provLeft--; health=Math.min(100,health+55); lastHurt=0;
     callout={text:'Provisions used',sub:'health restored · '+provLeft+' left',c:'#7cff5a',t:2}; tone(440,.2,.2,'sine'); tone(660,.25,.2,'sine',.12); }
   if(has('KeyK')){ save.hideKeys=!save.hideKeys; persist(); }
@@ -2310,17 +2361,18 @@ function drawControls(){
 function drawHUD(){
   ctx.textBaseline='alphabetic'; ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=6;
   const m=Math.floor(timeLeft/60), s=Math.floor(timeLeft%60), fs=TOUCH_UI?22:30;
+  const hx=TOUCH_UI?52:64;   // clear of the pause chip in the top-left corner
   ctx.font=`bold ${fs}px Georgia,serif`; ctx.fillStyle='#f1ebdc'; ctx.textAlign='left';
 
-  if(mode==='chal'&&CHAL){ ctx.fillText(m+':'+(s<10?'0':'')+s,20,fs+14); ctx.font='12px Trebuchet MS,sans-serif';
+  if(mode==='chal'&&CHAL){ ctx.fillText(m+':'+(s<10?'0':'')+s,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif';
     ctx.fillText(CHAL.name+' — '+Math.round(chalScore)+' '+CHAL.unit+'  (best '+((save.chalBest||{})[CHAL.id]|0)+')',22,fs+32); }
-  else if(mode==='arena'){ ctx.fillText(m+':'+(s<10?'0':'')+s,20,fs+14); ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillText('Open arena',22,fs+32); }
-  else if(mode==='surv'){ ctx.fillText('Wave '+wave,20,fs+14); ctx.font='12px Trebuchet MS,sans-serif'; const alive=animals.filter(a=>a.state!=='dead'&&a.state!=='gone').length; ctx.fillText(waveClear?('Next wave in '+Math.ceil(waveT)+' s'):(alive+' left  ·  '+waveKills+' kills'),22,fs+32); }
-  else { ctx.fillText(m+':'+(s<10?'0':'')+s,20,fs+14); ctx.font='12px Trebuchet MS,sans-serif';
-    ctx.fillText((LV?'Hunt '+LV.id+' · '+LV.name:'')+(tod>.8?' · light fading':''),22,fs+32);
+  else if(mode==='arena'){ ctx.fillText(m+':'+(s<10?'0':'')+s,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillText('Open arena',hx,fs+32); }
+  else if(mode==='surv'){ ctx.fillText('Wave '+wave,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif'; const alive=animals.filter(a=>a.state!=='dead'&&a.state!=='gone').length; ctx.fillText(waveClear?('Next wave in '+Math.ceil(waveT)+' s'):(alive+' left  ·  '+waveKills+' kills'),hx,fs+32); }
+  else { ctx.fillText(m+':'+(s<10?'0':'')+s,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif';
+    ctx.fillText((LV?'Hunt '+LV.id+' · '+LV.name:'')+(tod>.8?' · light fading':''),hx,fs+32);
     const bits=[]; if(WX&&WX!==WEATHER.clear)bits.push(WX.name); if(COND)bits.push(COND.name);
     if(bits.length){ ctx.save(); ctx.font='11px Trebuchet MS,sans-serif';
-      ctx.fillStyle='rgba(241,235,220,.72)'; ctx.fillText(bits.join('  ·  '),22,fs+48); ctx.restore(); } }
+      ctx.fillStyle='rgba(241,235,220,.72)'; ctx.fillText(bits.join('  ·  '),hx,fs+48); ctx.restore(); } }
   ctx.textAlign='right'; ctx.font=`bold ${fs}px Georgia,serif`; ctx.fillStyle='#ff6a13'; ctx.fillText(score,W-20,fs+14);
   ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillStyle='#f1ebdc'; ctx.fillText('+$'+cashDay+(W<560?'':' today'),W-22,fs+32);
   // objectives
@@ -2366,7 +2418,11 @@ function drawHUD(){
     ctx.font=`bold ${W<620?20:24}px Georgia,serif`; ctx.fillStyle=callout.c; ctx.fillText(callout.text,cx,coY);
     ctx.font=`${W<620?12:14}px Trebuchet MS,sans-serif`; ctx.fillStyle='#f1ebdc'; ctx.fillText(callout.sub,cx,coY+24);
     ctx.globalAlpha=1; }
-  if(warn){ ctx.globalAlpha=Math.min(1,warn.t); ctx.font='bold 22px Georgia,serif'; ctx.fillStyle=warn.text.startsWith('BEAR')?'#ff3b1f':'#f1ebdc'; ctx.fillText(warn.text,cx,H*.32); ctx.globalAlpha=1; }
+  if(warn){ const narrow=W<620;
+    const wy=narrow?Math.min(H*.50,H-210):H*.32;
+    ctx.globalAlpha=Math.min(1,warn.t); ctx.font=`bold ${narrow?17:22}px Georgia,serif`;
+    ctx.fillStyle=warn.text.startsWith('BEAR')?'#ff3b1f':'#f1ebdc';
+    ctx.fillText(warn.text,cx,wy); ctx.globalAlpha=1; }
   for(const fl of floaters){ ctx.globalAlpha=Math.min(1,fl.t); ctx.fillStyle='#ff6a13'; ctx.font='bold 22px Georgia,serif'; ctx.fillText(fl.text,fl.x,fl.y-(1.6-fl.t)*40); ctx.globalAlpha=1; }
   if(hitMark>0){ ctx.strokeStyle='#ff6a13'; ctx.lineWidth=3; ctx.beginPath(); for(const d of[[-1,-1],[1,-1],[-1,1],[1,1]]){ ctx.moveTo(cx+d[0]*8,H/2+d[1]*8); ctx.lineTo(cx+d[0]*18,H/2+d[1]*18); } ctx.stroke(); }
   ctx.shadowBlur=0;
@@ -2412,6 +2468,9 @@ function drawMinimap(){
 let last=performance.now();
 function frame(now){
   const dt=Math.min(.05,(now-last)/1000); last=now;
+  // Paused: keep painting the frozen scene behind the menu, advance nothing.
+  if(paused){ render(); requestAnimationFrame(frame); return; }
+  updateChrome();
   // slow cinematic pan across the country while the title screen is up
   updateTutorial(dt);
   if(titleUp&&!running){ P.yaw+=dt*.035; time+=dt*.25; tod=.30+.12*Math.sin(time*.05); FOG=palAt('fog'); LIGHT=palAt('light'); }
@@ -2662,7 +2721,50 @@ function renderLodge(){
   $('survBtn').disabled=!su; $('survBtn').style.opacity=su?1:.5;
 }
 function showTab(n){ ['Hunts','Shop','Chal','Career','Guide','Help'].forEach(k=>{ $('pane'+k).classList.toggle('on',k===n); $('tab'+k).classList.toggle('on',k===n); }); }
-let titleUp=true;
+let titleUp=true, paused=false;
+function canPause(){ return running&&!dying; }
+// "Iron sights" is a daily condition that leaves the scope at the lodge. Without
+// a word of explanation it just looks like the aim button is broken.
+function noScopeNote(){
+  callout={text:'No scope today',sub:"Today's conditions: iron sights only — that is why the payout is higher",c:'#e0b45a',t:3};
+  tone(220,.12,.14,'square');
+}
+function pauseGame(){
+  if(!canPause()||paused)return;
+  paused=true; scoped=false; breathHold=false;
+  if(document.exitPointerLock)document.exitPointerLock();
+  setTxt('pWhere', LV?LV.rg:(mode==='arena'?'Open arena':mode==='surv'?'Wave survival':CHAL?CHAL.name:'The ridge'));
+  setTxt('pTitle', mode==='hunt'&&LV?LV.name:'Paused');
+  const m=Math.floor(timeLeft/60), sec=Math.floor(timeLeft%60);
+  const kills=Object.values(stats.kills||{}).reduce((a,b)=>a+b,0);
+  setHtml('pStats',`<div class="stat"><b>${m}:${sec<10?'0':''}${sec}</b><small>Time left</small></div>
+    <div class="stat"><b>${score.toLocaleString()}</b><small>Score</small></div>
+    <div class="stat"><b>${kills}</b><small>Harvested</small></div>`);
+  setTxt('pLine', mode==='hunt'&&LV
+    ? 'Nothing moves while you are here. Ending now keeps what you have earned so far.'
+    : 'Nothing moves while you are here.');
+  $('pauseMenu').classList.remove('hidden');
+  updateChrome();
+}
+function resumeGame(){ if(!paused)return; paused=false; $('pauseMenu').classList.add('hidden'); updateChrome(); tryLock(); }
+function endFromPause(){
+  paused=false; $('pauseMenu').classList.add('hidden'); updateChrome();
+  if(mode==='chal')endChallenge();
+  else if(mode==='arena')endArena();
+  else if(mode==='surv'){ running=false; showLodge(); }
+  else endDay();
+}
+function quitFromPause(){
+  paused=false; $('pauseMenu').classList.add('hidden');
+  running=false; if(NETA){NETA.stop();NETA=null;}
+  showTitle(); updateChrome();
+}
+let chromeOn=null;
+function updateChrome(){
+  const want=canPause()&&!paused;
+  if(want===chromeOn)return;
+  chromeOn=want; $('pauseBtn').classList.toggle('on',want);
+}
 let TUT=null, tutRef=null;
 const TUT_STEPS=[
   {t:'Look around',      d:()=>TOUCH_UI?'Drag anywhere on the screen to look.':'Move your mouse to look. Click once if the view will not turn.',
@@ -2740,8 +2842,10 @@ function playNext(){
   const next=LEVELS.find(l=>unlocked(l)&&starsFor(l.id)<3)||LEVELS.find(l=>unlocked(l))||LEVELS[0];
   lvlSel=next.id; hideTitle(); audio(); startDay();
 }
-function showLodge(){ TUT=null; hideTitle(); if(NETA){NETA.stop();NETA=null;} CHAL=null; arenaAuth=false; remoteAnimals=new Map(); LV=null; rivals=[]; renderLodge(); $('lodge').classList.remove('hidden'); $('endScreen').classList.add('hidden'); $('deathScreen').classList.add('hidden'); }
-function startDay(){ if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=LEVELS.find(x=>x.id===lvlSel)||LEVELS[0]; mode='hunt'; audio(); resetDay(); running=true; $('lodge').classList.add('hidden'); $('endScreen').classList.add('hidden'); tryLock(); }
+function showLodge(){ paused=false; $('pauseMenu').classList.add('hidden'); updateChrome(); TUT=null; hideTitle(); if(NETA){NETA.stop();NETA=null;} CHAL=null; arenaAuth=false; remoteAnimals=new Map(); LV=null; rivals=[]; renderLodge(); $('lodge').classList.remove('hidden'); $('endScreen').classList.add('hidden'); $('deathScreen').classList.add('hidden'); }
+function startDay(){ if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=LEVELS.find(x=>x.id===lvlSel)||LEVELS[0]; mode='hunt'; audio(); resetDay(); running=true;
+  $('lodge').classList.add('hidden'); $('endScreen').classList.add('hidden'); tryLock();
+  if(COND){ warn={text:COND.name.toUpperCase(),t:3.2}; callout={text:COND.name,sub:COND.desc,c:'#e0b45a',t:5}; } }
 function startSurvival(){ if(!survUnlocked())return; if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=null; mode='surv'; audio(); resetDay(); animals=[]; fogDay=1; running=true; $('lodge').classList.add('hidden'); tryLock(); waveClear=true; waveT=3; warn={text:'Get ready',t:3}; }
 function arenaUnlocked(){ return starsFor(8)>0; }
 async function startArena(online){
@@ -2883,6 +2987,11 @@ $('tabChal').addEventListener('click',()=>showTab('Chal'));
 $('tabCareer').addEventListener('click',()=>showTab('Career'));
 $('playBtn').addEventListener('click',playNext);
 $('menuBtn').addEventListener('click',()=>{ audio(); showTitle(); });
+$('pauseBtn').addEventListener('click',e=>{ e.preventDefault(); e.stopPropagation(); pauseGame(); });
+$('pauseBtn').addEventListener('touchstart',e=>{ e.preventDefault(); e.stopPropagation(); pauseGame(); },{passive:false});
+$('pResume').addEventListener('click',resumeGame);
+$('pEnd').addEventListener('click',endFromPause);
+$('pQuit').addEventListener('click',quitFromPause);
 $('endMenuBtn').addEventListener('click',()=>{ audio(); showTitle(); });
 $('tTut').addEventListener('click',startTutorial);
 $('tLodge').addEventListener('click',()=>{ audio(); showLodge(); });
