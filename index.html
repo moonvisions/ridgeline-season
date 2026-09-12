@@ -362,11 +362,10 @@
   #bBreath{right:36px;bottom:222px;width:62px;height:62px}
   #joy{position:absolute;left:26px;bottom:34px;width:140px;height:140px;border-radius:50%;
     border:2px solid rgba(238,241,236,.4);background:radial-gradient(circle at 50% 45%,rgba(36,46,38,.3),rgba(11,16,13,.5));pointer-events:auto}
-  #joy::after{content:"push to run · double-tap to crouch";position:absolute;left:0;right:0;top:-20px;
+  #joy::after{content:"push to run";position:absolute;left:0;right:0;top:-20px;
     text-align:center;font-size:10px;color:rgba(238,241,236,.7);white-space:nowrap}
   #joyKnob{position:absolute;left:46px;top:46px;width:48px;height:48px;border-radius:50%;
     background:radial-gradient(circle at 40% 35%,rgba(255,255,255,.92),rgba(205,212,200,.6));box-shadow:0 4px 10px rgba(0,0,0,.5)}
-  #joy.crouch{border-color:var(--blaze)}
   #joy.run #joyKnob{background:radial-gradient(circle at 40% 35%,#ffb98a,var(--blaze))}
 
   /* Portrait phones: the landscape button positions collide with the HUD
@@ -667,12 +666,13 @@
     <div class="pane" id="paneHelp">
       <h2>How to hunt</h2>
       <div class="ctl" id="ctlMouse">
-        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or <kbd>↑</kbd><kbd>↓</kbd> to move · <b>hold <kbd>Shift</kbd> to run</b> · <kbd>E</kbd> toggles auto-run (then Shift walks) · <kbd>C</kbd> crouch (harder to spot, steadier aim)<br>
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows to move · <b>hold <kbd>Shift</kbd> to run</b> · <kbd>E</kbd> toggles auto-run (then Shift walks)<br>
+        <b>Stand still to disappear.</b> An animal is far less likely to notice you when you are not moving, and your aim settles too. Running is the loudest and most visible thing you can do.<br>
         <b>Look:</b> move the mouse. Click once to lock the mouse for smooth 360° spinning. <b>If your browser won't lock it, you can still turn all the way around</b> with <kbd>←</kbd><kbd>→</kbd> or by pushing the cursor against the left/right edge of the screen.<br>
-        <b>Left-click</b> fires · <b>Right-click</b> or <kbd>F</kbd> toggles the scope (a tap, not a hold) · <b>Middle-click</b> or the <b>wheel</b> swaps weapon · side buttons reload and hold breath · <b>Left-click</b> or <kbd>Enter</kbd> fire · <kbd>Space</kbd> hold breath · <kbd>R</kbd> reload · <kbd>1</kbd> rifle <kbd>2</kbd> bow · <kbd>Esc</kbd> free the cursor
+        <b>Left-click</b> fires · <b>Right-click</b> or <kbd>F</kbd> raises the scope (a tap, not a hold) · <kbd>Space</kbd> holds your breath while scoped · <kbd>R</kbd> reloads · <b>Middle-click</b>, the <b>wheel</b> or <kbd>Q</kbd> swaps rifle and bow · <kbd>K</kbd> hides the on-screen controls · <kbd>Esc</kbd> pauses
       </div>
       <div class="ctl hidden" id="ctlTouch">
-        Left stick walks — <b>push it all the way to run</b>, <b>double-tap it to crouch</b> (tap again to stand). Drag anywhere else to look. <b>AIM</b> toggles the scope, <b>FIRE</b> shoots, <b>SWAP GUN</b> switches rifle/bow, hold <b>HOLD BREATH</b> while scoped to steady.
+        Left stick walks — <b>push it all the way to run</b>. Stand still and animals are far less likely to notice you. Drag anywhere else to look. <b>AIM</b> raises the scope, <b>FIRE</b> shoots, <b>SWAP GUN</b> switches rifle and bow, and holding <b>HOLD BREATH</b> while scoped steadies your aim.
       </div>
       <h2>Learn by doing</h2>
       <p style="font-size:13px">A guided first hunt that walks you through looking, moving, aiming and harvesting one step at a time. Nothing to fail — each step waits until you have done it.</p>
@@ -965,7 +965,7 @@ function sfxStep(){
   const ac=audio(),t=ac.currentTime;
   const bio=(LV&&LV.biome)||'pine';
   const cut=bio==='alpine'?1800:bio==='fog'?520:900;
-  const vol=(P.crouch?.025:sprint?.085:.055)*(upg('boots')?.6:1);
+  const vol=(P.speed<2.2?.03:sprint?.085:.055)*(upg('boots')?.6:1);
   const n=ac.createBufferSource(); n.buffer=noiseBuf(ac,.09);
   const f=ac.createBiquadFilter(); f.type=bio==='alpine'?'highpass':'lowpass'; f.frequency.value=cut;
   const g=ac.createGain(); g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.001,t+(bio==='fog'?.11:.07));
@@ -1107,7 +1107,6 @@ const MATS={
   hide_prime: {name:'Prime hide',   price:75, desc:'Barely a mark on it.'},
   hide_tan:   {name:'Tanned hide',  price:115, desc:'Cured and ready to sell.'},
   meat:       {name:'Wild meat',    price:6,   desc:'Sold by the cut.'},
-  provisions: {name:'Provisions',   price:55,  desc:'Trail food. Carried into a hunt to heal.'},
   sinew:      {name:'Sinew',        price:15,  desc:'Backstrap sinew for fletching.'},
   antler:     {name:'Antler',       price:48,  desc:'Sheds and average racks.'},
   antler_big: {name:'Trophy rack',  price:280, desc:'The kind that goes on a wall.'},
@@ -1209,8 +1208,6 @@ const RECIPES=[
    cost:{hide_good:2}, make:()=>invAdd('hide_tan',1)},
   {id:'tanp',   name:'Tan a prime hide', out:'2 tanned hides', skill:'track', lv:10,
    cost:{hide_prime:1}, make:()=>invAdd('hide_tan',2)},
-  {id:'cure',   name:'Cure provisions', out:'1 provisions (heals mid-hunt, press H)', skill:'track', lv:6,
-   cost:{meat:8}, make:()=>{ save.provisions=(save.provisions|0)+1; }},
   {id:'salvage',name:'Salvage damaged hides', out:'1 good hide from 3 damaged', skill:'track', lv:2,
    cost:{hide_poor:3}, make:()=>invAdd('hide_good',1)},
 ];
@@ -1219,7 +1216,7 @@ function doCraft(r){ if(!canCraft(r))return; for(const k in r.cost)invTake(k,r.c
 const SKILLS=[
   {id:'marks',  name:'Marksmanship', desc:'Rifle harvests and long shots. Steadies your aim.'},
   {id:'arch',   name:'Archery',      desc:'Bow harvests and recovered arrows. Flattens arrow flight.'},
-  {id:'stealth',name:'Stealth',      desc:'Close and crouched harvests. Animals notice you later.'},
+  {id:'stealth',name:'Stealth',      desc:'Close harvests and shots taken standing still. Animals notice you later.'},
   {id:'track',  name:'Tracking',     desc:'Tagging carcasses and recovering wounded game. Pays better.'},
 ];
 function skillLevel(xp){ let lv=1,need=80; while(lv<50&&xp>=need){ xp-=need; lv++; need=Math.round(need*1.11); } return lv; }
@@ -1271,7 +1268,7 @@ const SPECIES_KEYS=Object.keys(SP);
 const GUIDE={
   deer: {latin:'Odocoileus virginianus', where:'Pine Hollow and Cedar Draw, in and around the timber edges',
     sign:'Cloven prints about 7 cm, often in pairs at a walk. Rubbed saplings in autumn.',
-    notes:'The animal you will meet first and most often. Nose far better than its eyes — it will smell you long before it sees you, so keep the wind in your face. Herds post a sentinel that feeds less and watches more; find that one before you move.',
+    notes:'The animal you will meet first and most often. Nose far better than its eyes — it will smell you long before it sees you, so keep the wind in your face. Herds post a sentinel that feeds less and watches more; find that one before you move. Freeze when it lifts its head.',
     shot:'Behind the shoulder, a third of the way up the body. A clean lung shot drops it inside forty metres.'},
   boar: {latin:'Sus scrofa', where:'Thick cover in Cedar Draw, rooting in the damp ground',
     sign:'Blunt, rounded prints and churned earth where a sounder has been rooting.',
@@ -1638,12 +1635,12 @@ function drawRival(r,p,fog){
 function angleToPlayer(o){ return Math.atan2(P.x-o.x,P.z-o.z); }
 
 // ---------- state ----------
-let running=false, P={x:0,z:0,yaw:0,pitch:0,crouch:false,stamina:100,speed:0,bob:0,eye:1.6};
+let running=false, P={x:0,z:0,yaw:0,pitch:0,stamina:100,speed:0,bob:0,eye:1.6};
 let weapon='rifle', zoom=1, scoped=false, breath=4, breathHold=false, ammo=5, arrowsLeft=14, reloading=0, recoil=0, flash=0;
 let score=0, cashDay=0, timeLeft=120, DAY=120, time=0, wind={dir:0,str:1}, keys={}, mv={x:0,y:0}, sprint=false;
 let stats, goalDone=[false,false,false], floaters=[], callout=null, hitMark=0, warn=null, stepT=0, dying=false, deathT=0;
 let swayY=0, swayP=0, f=1, horizonY=0, cx=0, tod=0, detection=0, nextBear=0, fogDay=1, chargingBear=null;
-let tracks=[], dirt=[], account=null, remoteAnimals=new Map(), arenaAuth=false, matchSeconds=180, killFeed=[], streak=0, streakT=0, arenaSeed=0, arenaOnline=false, rivals=[], arenaEnded=false, joyVec={x:0,y:0}, hurtFlash=0, CHAL=null, chalScore=0, legendSighted=null, provLeft=0, quiverFullMsg=0, autoRun=false, sawFirstBear=false, bearsLeft=0, mode='hunt', health=100, lastHurt=0, wave=0, waveT=0, waveClear=false, waveKills=0, smSpeed=0, runLatch=false;
+let tracks=[], dirt=[], account=null, remoteAnimals=new Map(), arenaAuth=false, matchSeconds=180, killFeed=[], streak=0, streakT=0, arenaSeed=0, arenaOnline=false, rivals=[], arenaEnded=false, joyVec={x:0,y:0}, hurtFlash=0, CHAL=null, chalScore=0, legendSighted=null, quiverFullMsg=0, autoRun=false, sawFirstBear=false, bearsLeft=0, mode='hunt', health=100, lastHurt=0, wave=0, waveT=0, waveClear=false, waveKills=0, smSpeed=0, runLatch=false;
 const LEVELS=[
  {id:1,rg:'Pine Hollow',biome:'pine',name:'First Light',t:60,tags:['deer'],fog:.8,hard:0,cash:80,xp:200,bears:0,
   brief:'Easy country, easy light. Learn the woods and put two deer in the bag.',
@@ -1723,7 +1720,7 @@ function breathMax(){ return [4,7,10][upg('lungs')]; }
 function scopeZoom(){ return [4,6,8][upg('scope')]; }
 
 function resetDay(worldSeed){
-  buildWorld(); P={x:0,z:0,yaw:rnd(0,TAU),pitch:0,crouch:false,stamina:100,speed:0,bob:0,eye:1.6};
+  buildWorld(); P={x:0,z:0,yaw:rnd(0,TAU),pitch:0,stamina:100,speed:0,bob:0,eye:1.6};
   herds=[]; herdId=1;
   animals=[]; for(let i=0;i<11;i++)animals.push(makeTrophy(spawnAnimal(true))); arrows=[]; blood=[]; stuck=[]; dirt=[]; tracks=[];
   weapon='rifle'; zoom=1; scoped=false; breath=breathMax(); breathHold=false; ammo=magSize(); arrowsLeft=Math.min(quiverSize(),quiverSize()+ (save.arrowStock|0)); save.arrowStock=Math.max(0,(save.arrowStock|0)-(arrowsLeft-quiverSize())); reloading=0; recoil=0; flash=0;
@@ -1734,7 +1731,7 @@ function resetDay(worldSeed){
   if(LV&&LV.bowOnly)weapon='bow';
   if(COND&&COND.id==='quiet')weapon='bow';
   stats={shots:0,hits:0,kills:{},wounded:0,bowKills:0,maxDist:0,minDist:999,bigVital:0,trophies:0,dmgTaken:0,far90:0,untagged:0}; floaters=[]; callout=null; hitMark=0; warn=null; dying=false; deathT=0;
-  autoRun=!!save.autoRun; provLeft=Math.min(3,save.provisions|0); goalDone=[false,false,false]; sawFirstBear=false; killFeed=[]; streak=0; streakT=0; DF=difficulty(); particles=[]; health=100; lastHurt=99; wave=0; waveT=0; waveClear=false; waveKills=0;
+  autoRun=!!save.autoRun; goalDone=[false,false,false]; sawFirstBear=false; killFeed=[]; streak=0; streakT=0; DF=difficulty(); particles=[]; health=100; lastHurt=99; wave=0; waveT=0; waveClear=false; waveKills=0;
   // Conditions are applied last, after difficulty and the world are settled, so
   // nothing downstream overwrites them.
   COND=(mode==='hunt'&&LV)?conditionFor(LV.id):null;
@@ -2054,7 +2051,11 @@ function hitTest(a,p,mx,my){
   for(const x of[.5,-.5])if(Math.abs(lx-x)<.17&&ly<sp.bodyY)return 'leg';
   return null;
 }
-function playerNoise(){ const b=upg('boots')?.55:1; if(P.speed<0.1)return 0; if(sprint&&P.speed>3)return 1*b; if(P.crouch)return .15*b; return .45*b; }
+function playerNoise(){ const b=upg('boots')?.55:1;
+  if(P.speed<0.1)return 0;                       // dead still — nothing to hear
+  if(sprint&&P.speed>4.7)return 1*b;             // running — they hear you coming
+  return clamp(P.speed/4.3,.25,1)*.42*b;         // walking, scaled by how fast
+}
 function updateAnimal(a,dt){
   const sp=SP[a.sp]; if(a.hurtT>0)a.hurtT=Math.max(0,a.hurtT-dt*3); if(a.state==='dead'){a.deadT+=dt;return;}
   a.t-=dt; a.phase+=dt*(a.speed>3?14:6)*(a.speed>0?1:0);
@@ -2073,7 +2074,8 @@ function updateAnimal(a,dt){
   // senses
   if(a.state!=='charge'&&a.state!=='stalk'&&a.state!=='retreat'&&d<130){
     let gain=0; const toP=angleToPlayer(a), rel=Math.abs(wrap(toP-a.heading));
-    const sightR=sp.sight*DF.sense*WX.sight*(a.alertMul||1)*(1-Math.min(.3,(sLv('stealth')-1)*.01))*(P.crouch?.5:1)*[1,.7,.45][upg('camo')]*(P.speed>0.1?1:.6);
+    const moveVis=P.speed<0.1?.45:(sprint&&P.speed>4.7)?1.25:.85;
+    const sightR=sp.sight*DF.sense*WX.sight*(a.alertMul||1)*(1-Math.min(.3,(sLv('stealth')-1)*.01))*moveVis*[1,.7,.45][upg('camo')];
     if(rel<1.3&&d<sightR) gain+=(1-d/sightR)*1.4;
     const n=playerNoise(); if(n>0&&d<sp.hear*DF.sense*WX.hear*n*2.2) gain+=n*1.2;
     const wx=Math.sin(wind.dir), wz=Math.cos(wind.dir), ax=(a.x-P.x)/d, az=(a.z-P.z)/d, down=ax*wx+az*wz;
@@ -2154,8 +2156,8 @@ function killAnimal(a,zone,d,p){
   if(mode==='arena'&&NETA)NETA.emit({t:'kill',species:sp.name,points:pts});
   // train the skill that did the work
   if(zone==='recovered'){ addSkill('track',60+d*.5); }
-  else if(weapon==='bow'){ addSkill('arch',35+d*.9+(zone==='vital'?25:0)); if(d<25)addSkill('stealth',20+ (P.crouch?15:0)); }
-  else { addSkill('marks',25+d*.8+(zone==='vital'?20:0)); if(P.crouch||d<25)addSkill('stealth',12+(P.crouch?12:0)); }
+  else if(weapon==='bow'){ addSkill('arch',35+d*.9+(zone==='vital'?25:0)); if(d<25)addSkill('stealth',20+(P.speed<0.1?15:0)); }
+  else { addSkill('marks',25+d*.8+(zone==='vital'?20:0)); if(P.speed<0.1||d<25)addSkill('stealth',12+(P.speed<0.1?12:0)); }
   if(clean){ streak++; streakT=6; if(streak>=2){ const sb=Math.round(pts*.15*streak); score+=sb; pushFeed('Streak ×'+streak,'+'+sb,'#ffd166'); tone(700+streak*90,.18,.18,'triangle'); } } else streak=0;
   pushFeed('You took a '+sp.name.toLowerCase(),'+'+pts,'#ff6a13');
   callout={text:(a.trophy?'TROPHY! ':'')+(zone==='vital'?'Clean kill':zone==='head'?'Head shot':zone==='recovered'?'Recovered':'Dropped')+' — '+sp.name, sub:Math.round(d)+' m  ·  +'+pts+'  ·  +$'+cash+'  ·  walk to it to tag', c:'#ff6a13', t:3.5};
@@ -2187,14 +2189,14 @@ function fire(){
       P.pitch=clamp(P.pitch+.04*(scoped?.6:1),-.7,.7); }
     else { if(arrowsLeft<=0){ sfxClick(0,900); return; } arrowsLeft--; sfxBow(); recoil=.4; }
     stats.shots++;
-    const puff=P.stamina<35?2:1, spread=(weapon==='rifle'?(scoped?.0025:.02):(scoped?.004:.015))*(breathHold&&scoped?.35:1)*(P.crouch?.7:1)*puff;
+    const puff=P.stamina<35?2:1, spread=(weapon==='rifle'?(scoped?.0025:.02):(scoped?.004:.015))*(breathHold&&scoped?.35:1)*(P.speed<0.1?.7:1)*puff;
     NETA.emit({t:'shot',weapon,x:+P.x.toFixed(2),z:+P.z.toFixed(2),yaw:+(P.yaw+swayY+rnd(-spread,spread)).toFixed(4),pitch:+(P.pitch+swayP+rnd(-spread,spread)).toFixed(4),magnum:!!upg('rifle'),bowSpeed:upg('bow')?78:58});
     return; }
   if(weapon==='rifle'){
     if(ammo<=0){ sfxClick(0,1400); return; }
     ammo--; stats.shots++; sfxShot(); flash=.08; recoil=1;
     for(let i=0;i<12;i++)particles.push({x:cx+W*.07,y:H*.53,vx:rnd(-40,40)-60,vy:rnd(-90,-20),life:rnd(.6,1.4),c:'#c9c4b6',sz:rnd(6,16),smoke:true});
-    const puff=P.stamina<35?2:1, spread=(scoped?.0025:.02)*(breathHold&&scoped?.35:1)*(P.crouch?.7:1)*puff;
+    const puff=P.stamina<35?2:1, spread=(scoped?.0025:.02)*(breathHold&&scoped?.35:1)*(P.speed<0.1?.7:1)*puff;
     const mx=cx+Math.tan(rnd(-spread,spread))*f, my=H/2+Math.tan(rnd(-spread,spread))*f;
     const list=animals.filter(a=>a.state!=='dead'&&a.state!=='gone').map(a=>({a,p:project(a.x,a.z,0)})).filter(o=>o.p).sort((u,v)=>u.p.zr-v.p.zr);
     let hit=null;
@@ -2343,9 +2345,9 @@ function keyNames(e){
   const out=[];
   if(e.code)out.push(e.code);
   const k=(e.key||'').toLowerCase();
-  const alias={w:'KeyW',a:'KeyA',s:'KeyS',d:'KeyD',r:'KeyR',c:'KeyC',f:'KeyF',q:'KeyQ',
+  const alias={w:'KeyW',a:'KeyA',s:'KeyS',d:'KeyD',r:'KeyR',f:'KeyF',q:'KeyQ',k:'KeyK',
     arrowup:'ArrowUp',arrowdown:'ArrowDown',arrowleft:'ArrowLeft',arrowright:'ArrowRight',
-    ' ':'Space',spacebar:'Space',enter:'Enter','1':'Digit1','2':'Digit2',shift:'ShiftLeft',escape:'Escape',esc:'Escape'};
+    ' ':'Space',spacebar:'Space',enter:'Enter',shift:'ShiftLeft',escape:'Escape',esc:'Escape'};
   if(alias[k]&&!out.includes(alias[k]))out.push(alias[k]);
   return out;
 }
@@ -2364,13 +2366,8 @@ function onKeyDown(e){
   if(has('KeyR'))reload();
   if(has('Space'))breathHold=true;
   if(repeat)return;          // everything below is a toggle or a one-shot action
-  if(has('KeyC'))P.crouch=!P.crouch;
-  if(has('Digit1')&&!(LV&&LV.bowOnly&&mode==='hunt'))weapon='rifle';
-  if(has('Digit2'))weapon='bow';
   if(has('KeyQ'))swapWeapon();
   if(has('KeyF')){ if(COND&&COND.id==='iron')noScopeNote(); else scoped=!scoped; }
-  if(has('KeyH')&&running&&provLeft>0&&health<100){ provLeft--; health=Math.min(100,health+55); lastHurt=0;
-    callout={text:'Provisions used',sub:'health restored · '+provLeft+' left',c:'#7cff5a',t:2}; tone(440,.2,.2,'sine'); tone(660,.25,.2,'sine',.12); }
   if(has('KeyK')){ save.hideKeys=!save.hideKeys; persist();
     callout={text:save.hideKeys?'Controls hidden':'Controls shown',sub:'press K to toggle',c:'#7cff5a',t:1.6}; }
   if(has('KeyE')){ autoRun=!autoRun; save.autoRun=autoRun; persist(); callout={text:autoRun?'Auto-run ON':'Auto-run off',sub:autoRun?'Hold Shift to walk':'Hold Shift to run',c:'#7cff5a',t:1.6}; }
@@ -2398,7 +2395,7 @@ if(IS_TOUCH||'ontouchstart' in window){
   const joy=$('joy'), knob=$('joyKnob'); let jid=null, jc={x:0,y:0};
   let lastTap=0;
   joy.addEventListener('touchstart',e=>{ e.preventDefault(); const t=e.changedTouches[0]; jid=t.identifier; const r=joy.getBoundingClientRect(); jc={x:r.left+r.width/2,y:r.top+r.height/2};
-    const now=performance.now(); if(now-lastTap<320){ P.crouch=!P.crouch; joy.classList.toggle('crouch',P.crouch); tone(P.crouch?300:420,.08,.12,'square'); } lastTap=now; },{passive:false});
+    lastTap=performance.now(); },{passive:false});
   joy.addEventListener('touchmove',e=>{ e.preventDefault(); for(const t of e.changedTouches){ if(t.identifier===jid){ let dx=t.clientX-jc.x, dy=t.clientY-jc.y; const R=joy.getBoundingClientRect().width/2-14; const m=Math.hypot(dx,dy); if(m>R){dx*=R/m;dy*=R/m;} joyVec={x:dx/R,y:-dy/R}; knob.style.transform=`translate(${dx}px,${dy}px)`; joy.classList.toggle('run',Math.hypot(joyVec.x,joyVec.y)>.9); } } },{passive:false});
   const jend=e=>{ e.preventDefault(); jid=null; joyVec={x:0,y:0}; knob.style.transform=''; joy.classList.remove('run'); }; joy.addEventListener('touchend',jend,{passive:false}); joy.addEventListener('touchcancel',jend,{passive:false});
   const btn=(id,down,up)=>{ const el=$(id); el.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();el.classList.add('active');down();},{passive:false}); el.addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();if(!el.dataset.toggle)el.classList.remove('active');if(up)up();},{passive:false}); return el; };
@@ -2421,7 +2418,7 @@ function updatePlayer(dt){
   const turnKeys=(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0)+(keys.Period?1:0)-(keys.Comma?1:0);
   if(turnKeys||edgeTurn) P.yaw += (turnKeys*1.9 + edgeTurn*2.4) * dt / Math.max(1,zoom*0.5);
   let spd=0;
-  if(mag>0.05){ const tired=clamp(P.stamina/25,0,1); let want=P.crouch?2.2:(sprint&&P.stamina>0?lerp(5.6,8.4,tired):4.3);
+  if(mag>0.05){ const tired=clamp(P.stamina/25,0,1); let want=(sprint&&P.stamina>0?lerp(5.6,8.4,tired):4.3);
     if(TAMP>0){ const sl=terrSlope(P.x,P.z,Math.sin(P.yaw+Math.atan2(mv.x,mv.y)),Math.cos(P.yaw+Math.atan2(mv.x,mv.y)));
       want*=clamp(1-sl*.55,.62,1.16); }
     spd=want*Math.min(1,mag);
@@ -2432,7 +2429,7 @@ function updatePlayer(dt){
     const dd=Math.hypot(nx,nz); if(dd>MAP_R){ nx*=MAP_R/dd; nz*=MAP_R/dd; warn=warn&&warn.text.startsWith('BEAR')?warn:{text:'Edge of the hunting lease',t:1}; }
     P.x=nx; P.z=nz;
     if(spd>4.7&&sprint)P.stamina=Math.max(0,P.stamina-10.5*dt);
-    stepT+=spd*dt; if(stepT>1.7){ stepT=0; if(!P.crouch)sfxStep(); if(sprint&&spd>4.2)particles.push({x:cx+rnd(-30,30),y:H*.82,vx:rnd(-20,20),vy:-rnd(10,30),life:.5,c:'#c9bb96',sz:rnd(4,9),smoke:true}); }
+    stepT+=spd*dt; if(stepT>1.7){ stepT=0; sfxStep(); if(sprint&&spd>4.2)particles.push({x:cx+rnd(-30,30),y:H*.82,vx:rnd(-20,20),vy:-rnd(10,30),life:.5,c:'#c9bb96',sz:rnd(4,9),smoke:true}); }
   }
   if(!(spd>4.7&&sprint))P.stamina=Math.min(100,P.stamina+(upg('lungs')?24:18)*dt);
   lastHurt+=dt; if(lastHurt>4)health=Math.min(100,health+6*dt); hurtFlash=Math.max(0,hurtFlash-dt*1.5);
@@ -2447,7 +2444,7 @@ function updatePlayer(dt){
       pushFeed('Recovered '+got+' arrow'+(got>1?'s':''),arrowsLeft+'/'+quiverSize(),'#7cff5a'); }
   }
   if(quiverFullMsg>0)quiverFullMsg=Math.max(0,quiverFullMsg-dt);
-  P.speed=spd; P.bob+=spd*dt*2.2; const targetEye=(P.crouch?1.0:1.6)+Math.sin(P.bob)*spd*0.012; P.eye+=(targetEye-P.eye)*Math.min(1,dt*8);
+  P.speed=spd; P.bob+=spd*dt*2.2; const targetEye=1.6+Math.sin(P.bob)*spd*0.012; P.eye+=(targetEye-P.eye)*Math.min(1,dt*8);
   if(scoped&&spd>4.7)scoped=false;
 }
 
@@ -2612,9 +2609,9 @@ function keycap(x,y,label,h){
   ctx.restore(); return w;
 }
 const CONTROLS=[
-  [['W','A','S','D'],'Move'], [['Shift'],'Run'], [['E'],'Auto-run'], [['C'],'Crouch'],
-  [['R'],'Reload'], [['F'],'Scope'], [['Space'],'Hold breath'], [['1'],'Rifle'], [['2'],'Bow'],
-  [['Q'],'Swap'], [['H'],'Provisions'], [['Esc'],'Free mouse'],
+  [['W','A','S','D'],'Move'], [['Shift'],'Run'], [['E'],'Auto-run'],
+  [['F'],'Scope'], [['Space'],'Hold breath'], [['R'],'Reload'],
+  [['Q'],'Swap weapon'], [['K'],'Hide this'], [['Esc'],'Pause'],
 ];
 // How tall the legend panel is, so the HUD can sit above it instead of inside it.
 function controlsH(){
@@ -2688,13 +2685,10 @@ function drawHUD(){
     ctx.fillText(SHOP[4].lv[upg('bow')]+'  ·  '+arrowsLeft+'/'+quiverSize()+' arrows',ax,ay);
     if(stuck.length){ ctx.font='11px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(124,255,90,.85)';
       ctx.fillText(stuck.length+' spent arrow'+(stuck.length>1?'s':'')+' to recover',ax,ay-24); ctx.font='bold 14px Trebuchet MS,sans-serif'; } }
-  // provisions sits above the whole block, clear of the pips and the bars
-  if(provLeft){ ctx.font='11px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(124,255,90,.85)';
-    ctx.fillText('provisions ×'+provLeft+' (H)',ax,ay-(weapon==='rifle'?58:40)); ctx.font='bold 14px Trebuchet MS,sans-serif'; }
-  // stamina + crouch
+  // stamina
   ctx.fillStyle='rgba(255,255,255,.2)'; ctx.fillRect(ax,ay+6,110,5); ctx.fillStyle=P.stamina<35?'#e05a3a':'#7cff5a'; ctx.fillRect(ax,ay+6,110*P.stamina/100,5);
   ctx.font='11px Trebuchet MS,sans-serif';
-  const running_=sprint&&P.speed>4.7, gait=P.crouch?'Crouched':running_?'RUNNING':'Walking';
+  const running_=sprint&&P.speed>4.7, gait=running_?'RUNNING':P.speed<0.1?'Still — hardest to spot':'Walking';
   ctx.fillStyle=P.stamina<20?'#ff8c3b':running_?'#7cff5a':'rgba(241,235,220,.8)';
   ctx.fillText(gait+(P.stamina<20?' · out of breath':P.stamina<50?' · winded':'')+(autoRun?' · auto-run':''),ax+118,ay+11);
 
@@ -2772,7 +2766,7 @@ function frame(now){
     if(scoped){ if(breathHold&&breath>0){ breath=Math.max(0,breath-dt); if(breath===0)breathHold=false; } else breath=Math.min(breathMax(),breath+dt*.7); } else breath=Math.min(breathMax(),breath+dt*1.2);
     smSpeed+=(P.speed-smSpeed)*Math.min(1,dt*5);
     const steady=1-Math.min(.35,(sLv('marks')-1)*.012);   // Marksmanship steadies the hold
-    const puff=P.stamina<20?1.5:1, base=(scoped?(breathHold&&breath>0?.0004:.0028):.0009)*steady, sw=base*puff*(P.crouch?.6:1)+smSpeed*.0004;
+    const puff=P.stamina<20?1.5:1, base=(scoped?(breathHold&&breath>0?.0004:.0028):.0009)*steady, sw=base*puff*(P.speed<0.1?.65:1)+smSpeed*.0004;
     swayY=Math.sin(time*1.3)*sw+Math.sin(time*2.9)*sw*.4; swayP=Math.sin(time*.9)*sw*.8;
     recoil=Math.max(0,recoil-dt*5); flash=Math.max(0,flash-dt); hitMark=Math.max(0,hitMark-dt);
     if(reloading>0){ reloading-=dt; if(reloading<=0){reloading=0;ammo=magSize();} }
@@ -2975,17 +2969,15 @@ function renderLodge(){
     <div class="stat"><b>${save.contractsDone||0}</b><small>Contracts filled</small></div>`);
   // game bag
   const bagKeys=Object.keys(save.inv||{}).filter(k=>MATS[k]&&invCount(k)>0);
-  const stock=(save.arrowStock|0), prov=(save.provisions|0);
-  setHtml('bag', (bagKeys.length||stock||prov)
+  const stock=(save.arrowStock|0);
+  setHtml('bag', (bagKeys.length||stock)
     ? bagKeys.map(k=>`<div class="item"><b>${MATS[k].name} ×${invCount(k)}</b><small>${MATS[k].desc}</small>
         <button data-sell="${k}">Sell all — $${MATS[k].price*invCount(k)}</button></div>`).join('')
-      + (prov?`<div class="item" style="border-color:#2b6f3f"><b>Provisions ×${prov}</b><small>Carried into a hunt (up to 3). Press H to heal.</small><button data-sell="provisions">Sell all — $${MATS.provisions.price*prov}</button></div>`:'')
       + (stock?`<div class="item" style="border-color:#1f4f6b"><b>Fletched arrows ×${stock}</b><small>Added on top of your quiver next hunt.</small></div>`:'')
     : '<p style="font-size:13px;color:var(--muted)">Empty. Harvest animals in the field by walking up to them after the shot.</p>');
   $('bag').querySelectorAll('button[data-sell]').forEach(b=>b.addEventListener('click',()=>{
     const k=b.dataset.sell;
-    if(k==='provisions'){ save.cash+=MATS.provisions.price*(save.provisions|0); save.provisions=0; }
-    else { save.cash+=MATS[k].price*invCount(k); delete save.inv[k]; }
+    save.cash+=MATS[k].price*invCount(k); delete save.inv[k];
     persist(); renderLodge(); }));
   setHtml('craft',RECIPES.map(r=>{
     const ok=canCraft(r), lvOk=sLv(r.skill)>=r.lv;
@@ -3222,8 +3214,6 @@ const TUT_STEPS=[
    ok:()=>Math.hypot(P.x-tutRef.x,P.z-tutRef.z)>7},
   {t:'Break into a run', d:()=>TOUCH_UI?'Push the stick all the way out.':'Hold Shift while you move. Running tires you and animals hear it.',
    ok:()=>P.speed>6},
-  {t:'Get low',          d:()=>TOUCH_UI?'Double-tap the stick to crouch.':'Press C. Crouching halves how far an animal can see you.',
-   ok:()=>P.crouch===true},
   {t:'Raise the scope',  d:()=>TOUCH_UI?'Tap AIM.':'Right-click, or press F.',
    ok:()=>scoped===true},
   {t:'Steady your aim',  d:()=>TOUCH_UI?'Hold the BREATH button while aiming.':'Hold Space while scoped. Your aim settles while you hold your breath.',
@@ -3418,7 +3408,6 @@ function endDay(){
   if(st>prevStars)save.stars[LV.id]=st;
   if(st>0&&prevStars===0)save.tot.hunts++;
   if(st===3)save.tot.perfect++;
-  save.provisions=Math.max(0,(save.provisions|0)-(Math.min(3,save.provisions|0)-provLeft));
   checkBadges(); persist(); if(account)acctSync();
   const newRank=rankIdx()>prevRank;
   setTxt('endTitle',st>0?'Hunt complete':'Hunt failed');
@@ -3489,7 +3478,7 @@ async function loadChalBoard(){ if(!httpBase()){ setHtml('cbOut','Enter a server
   catch(e){ setHtml('cbOut','Could not load: '+e.message); } }
 document.querySelectorAll('button[data-cb]').forEach(b=>b.addEventListener('click',()=>{ cbBy=b.dataset.cb; document.querySelectorAll('button[data-cb]').forEach(x=>x.classList.toggle('on',x===b)); loadChalBoard(); }));
 $('sellAll').addEventListener('click',()=>{ let got=0;
-  for(const k of Object.keys(save.inv||{})){ if(MATS[k]&&k!=='provisions'){ got+=MATS[k].price*invCount(k); delete save.inv[k]; } }
+  for(const k of Object.keys(save.inv||{})){ if(MATS[k]){ got+=MATS[k].price*invCount(k); delete save.inv[k]; } }
   save.cash+=got; persist(); renderLodge(); });
 $('acctLogin').addEventListener('click',acctLogin); $('acctRegister').addEventListener('click',acctRegister);
 $('acctLogout').addEventListener('click',acctLogout); $('acctSync').addEventListener('click',acctSync);
