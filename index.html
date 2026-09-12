@@ -75,6 +75,72 @@
     letter-spacing:2px;text-transform:uppercase;color:var(--faint)}
   .tFoot i{width:4px;height:4px;background:var(--faint);border-radius:50%;display:inline-block}
 
+  /* ---- results screen: the two ways out sit side by side, as real buttons ---- */
+  .endRow{display:flex;gap:10px;margin-top:12px}
+  .endRow button{flex:1;margin:0}
+  @media (max-width:560px){ .endRow{flex-direction:column;gap:8px} }
+
+  /* ---- recovery code, shown once ---- */
+  #recovery{z-index:15}
+  .recBox{font-family:var(--type);font-size:clamp(22px,5.5vw,34px);letter-spacing:4px;color:var(--gold);
+    background:rgba(10,16,12,.7);border:1px dashed var(--gold);border-radius:8px;
+    padding:18px;margin-top:20px;text-align:center;user-select:all}
+  #recGo{margin-top:16px}
+
+  /* ---- privacy policy / terms ---- */
+  #legal{z-index:14;align-items:flex-start}
+  .legalCard{max-width:720px}
+  #legalBody{margin-top:18px;max-width:640px}
+  #legalBody h2{font-size:13px;margin:26px 0 8px}
+  #legalBody p{font-size:14.5px;line-height:1.7;color:#c6d1c6}
+  #legalBody ul{margin:10px 0 0 20px;color:#c6d1c6;font-size:14px;line-height:1.75}
+  #legalBody b{color:#fff}
+  .eLegal a,#dataState a,.net a{color:var(--gold);text-decoration:underline}
+  .eLegal{margin-top:14px;font-size:12px}
+
+  /* ---- ad slots ----
+     In the page flow, never over the game. They collapse to nothing when the
+     player is ad-free, so there is no leftover gap. */
+  .adslot{margin-top:22px}
+  .adInner{background:rgba(20,27,22,.6);border:1px dashed rgba(255,255,255,.18);border-radius:9px;
+    padding:16px;text-align:center;backdrop-filter:blur(4px)}
+  .adTag{display:inline-block;font-family:var(--type);font-size:8.5px;letter-spacing:2px;
+    text-transform:uppercase;color:var(--faint);margin-bottom:8px}
+  .adInner p{font-size:13px;color:var(--dim);margin:0 0 12px}
+  .adBuy{width:auto;margin:0;padding:11px 20px;font-size:12.5px;background:rgba(14,20,16,.7);
+    color:#d8e0d7;border:1px solid rgba(255,255,255,.24);box-shadow:none;letter-spacing:1.2px}
+  .adBuy:hover{background:rgba(255,106,31,.18);border-color:var(--blaze);color:#fff;filter:none}
+  .adTitle{max-width:430px}
+  .adTitle .adInner{padding:12px 14px}
+  .adTitle .adInner p{margin-bottom:9px;font-size:12px}
+  @media (max-width:620px){ .adTitle{max-width:none} .adslot{margin-top:16px} }
+
+  /* ---- entry screen: sign in, create an account, or play as a guest ---- */
+  #entry{z-index:13}
+  .eWrap{max-width:520px}
+  .eBox{margin-top:22px;background:rgba(14,20,16,.62);border:1px solid rgba(255,255,255,.16);
+    border-radius:10px;padding:16px 16px 18px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  .eTabs{display:flex;gap:6px;margin-bottom:6px}
+  .eTabs button{flex:1;margin:0;padding:11px;font-family:var(--disp);font-size:12.5px;letter-spacing:1.4px;
+    text-transform:uppercase;background:rgba(255,255,255,.05);color:var(--dim);border:1px solid var(--line);
+    border-radius:6px;box-shadow:none;cursor:pointer;transition:background .14s,color .14s}
+  .eTabs button.on{background:rgba(255,106,31,.18);color:#fff;border-color:var(--blaze)}
+  .eBox .netrow{display:flex;gap:10px}
+  .eBox label{display:block;flex:1;font-family:var(--type);font-size:9.5px;color:var(--faint);
+    margin-top:10px;text-transform:uppercase;letter-spacing:1.5px}
+  .eBox input{width:100%;padding:12px;margin-top:5px;font-family:var(--sans);font-size:16px;
+    border:1px solid var(--line);border-radius:6px;background:rgba(0,0,0,.45);color:var(--ink)}
+  .eBox input:focus{outline:none;border-color:var(--blaze);box-shadow:0 0 0 3px rgba(255,106,31,.2)}
+  .eGo{margin-top:16px;width:100%;min-width:0;padding:16px;font-size:16px}
+  .eNote{font-size:12.5px;line-height:1.5;color:var(--dim);margin-top:10px;max-width:460px}
+  .eGuestBtn{margin-top:18px;width:100%}
+  @media (max-width:620px){
+    .eWrap{padding:0 18px 5vh}
+    .eBox{padding:14px}
+    .eBox .netrow{flex-wrap:wrap}
+    .eBox label{flex:1 1 100%}
+  }
+
   /* ---- layout preferences ----
      Left-handed play mirrors the whole touch layer horizontally, then flips the
      labels back so text is not reversed. Button size nudges every control by a
@@ -389,7 +455,55 @@
   <div class="tbtn" id="bBreath">HOLD<br>BREATH</div>
 </div>
 
+<div class="overlay title" id="entry">
+  <div class="tWrap eWrap">
+    <div class="tKicker">North Slope · open season</div>
+    <h1 class="tName">RIDGELINE<em>SEASON</em></h1>
+    <div class="tRule"></div>
+    <p class="tBlurb" id="eIntro">Track it, take it clean, carry it out.</p>
+
+    <div class="eBox" id="eAccount">
+      <div class="eTabs">
+        <button id="eTabIn" class="on">Sign in</button>
+        <button id="eTabUp">Create account</button>
+      </div>
+      <div class="netrow">
+        <label>Hunter name <input id="eUser" maxlength="14" autocomplete="username" placeholder="yourname"></label>
+        <label>Password <input id="ePass" type="password" minlength="8" autocomplete="current-password" placeholder="8+ characters"></label>
+      </div>
+      <button id="eGo" class="tPlay eGo">Sign in</button>
+      <p class="eNote" id="eStatus">An account saves your progress, stats and leaderboard place on every device.</p>
+    </div>
+
+    <button id="eGuest" class="tLink eGuestBtn">Continue as guest</button>
+    <p class="eNote eLegal">By playing you agree to the <a href="#" id="eTerms">terms</a> and
+      <a href="#" id="ePrivacy">privacy policy</a>.</p>
+    <p class="eNote" id="eGuestNote">Guests get the whole game, but nothing is saved — progress, gear and stats disappear when you close the tab.</p>
+  </div>
+</div>
+
 <button id="pauseBtn" aria-label="Pause"><span></span><span></span></button>
+
+<div class="overlay title hidden" id="recovery">
+  <div class="tWrap eWrap">
+    <div class="tKicker">Keep this somewhere safe</div>
+    <h1 class="tName" style="font-size:clamp(30px,6vw,52px)">RECOVERY<em>CODE</em></h1>
+    <div class="tRule"></div>
+    <p class="tBlurb">There is no email on your account, so this code is the only way back in if
+      you forget your password. Write it down or screenshot it now — it is not shown again.</p>
+    <div class="recBox" id="recCode">---------</div>
+    <button id="recCopy" class="tLink" style="width:auto">Copy code</button>
+    <button id="recGo" class="tPlay">I have saved it — start hunting</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="legal">
+  <div class="card legalCard">
+    <button id="legalBack" class="backBtn">← Back</button>
+    <h1 id="legalTitle">Privacy</h1>
+    <div id="legalBody"></div>
+  </div>
+</div>
 
 <div class="overlay hidden" id="pauseMenu">
   <div class="card pauseCard">
@@ -417,6 +531,8 @@
       <button id="tGuide" class="tLink">Field guide</button>
       <button id="tHelp" class="tLink">Controls</button>
     </div>
+    <div class="adslot adTitle" id="adTitle"></div>
+    <p class="eNote" id="tGuest" style="display:none;color:#ffb36b;margin-top:14px"></p>
     <div class="tFoot"><span id="tRank">Greenhorn</span><i></i><span id="tCash">$0</span><i></i><span id="tStars">0 / 42 stars</span></div>
   </div>
 </div>
@@ -448,6 +564,7 @@
       <h2>Standing contracts</h2>
       <p style="font-size:12px;color:var(--muted)">Side goals that pay extra cash and XP as you hunt. No need to seek them out — just play, and progress fills in below.</p>
       <div class="shop" id="contracts"></div>
+      <div class="adslot" id="adHunts"></div>
     </div>
 
     <div class="pane" id="paneShop">
@@ -519,6 +636,14 @@
       <div class="shop" id="skills"></div>
       <h2>Badges</h2>
       <div class="shop" id="badges"></div>
+      <h2>Your data</h2>
+      <p style="font-size:13px">Everything the game knows about you, and how to get rid of it.</p>
+      <div class="net">
+        <button id="myData" class="ghost">Download my data</button>
+        <button id="delAccount" class="ghost">Delete my account permanently</button>
+        <p id="dataState" style="font-size:12px;color:var(--muted);min-height:16px">Deleting is immediate and cannot be undone.</p>
+        <p style="font-size:12px;color:var(--muted)"><a href="#" id="lnkPrivacy">Privacy policy</a> · <a href="#" id="lnkTerms">Terms</a></p>
+      </div>
       <button class="link" id="resetBtn">Reset all progress</button>
       <h2>Trophy room</h2>
       <p style="font-size:12px;color:var(--muted)">Every species, every grade. Completion is its own reward — and the legends are one apiece, forever.</p>
@@ -544,7 +669,7 @@
       <div class="ctl" id="ctlMouse">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or <kbd>↑</kbd><kbd>↓</kbd> to move · <b>hold <kbd>Shift</kbd> to run</b> · <kbd>E</kbd> toggles auto-run (then Shift walks) · <kbd>C</kbd> crouch (harder to spot, steadier aim)<br>
         <b>Look:</b> move the mouse. Click once to lock the mouse for smooth 360° spinning. <b>If your browser won't lock it, you can still turn all the way around</b> with <kbd>←</kbd><kbd>→</kbd> or by pushing the cursor against the left/right edge of the screen.<br>
-        <b>Right-click</b> or <kbd>F</kbd> toggles the scope (a tap, not a hold) · <b>Left-click</b> or <kbd>Enter</kbd> fire · <kbd>Space</kbd> hold breath · <kbd>R</kbd> reload · <kbd>1</kbd> rifle <kbd>2</kbd> bow · <kbd>Esc</kbd> free the cursor
+        <b>Left-click</b> fires · <b>Right-click</b> or <kbd>F</kbd> toggles the scope (a tap, not a hold) · <b>Middle-click</b> or the <b>wheel</b> swaps weapon · side buttons reload and hold breath · <b>Left-click</b> or <kbd>Enter</kbd> fire · <kbd>Space</kbd> hold breath · <kbd>R</kbd> reload · <kbd>1</kbd> rifle <kbd>2</kbd> bow · <kbd>Esc</kbd> free the cursor
       </div>
       <div class="ctl hidden" id="ctlTouch">
         Left stick walks — <b>push it all the way to run</b>, <b>double-tap it to crouch</b> (tap again to stand). Drag anywhere else to look. <b>AIM</b> toggles the scope, <b>FIRE</b> shoots, <b>SWAP GUN</b> switches rifle/bow, hold <b>HOLD BREATH</b> while scoped to steady.
@@ -552,6 +677,11 @@
       <h2>Learn by doing</h2>
       <p style="font-size:13px">A guided first hunt that walks you through looking, moving, aiming and harvesting one step at a time. Nothing to fail — each step waits until you have done it.</p>
       <button id="tutBtn">Play the guided hunt</button>
+      <h2>Ad-free</h2>
+      <div class="net">
+        <p id="premiumState" style="font-size:13px;margin:0">Removing ads is $4.99, once, and it stays with your account.</p>
+        <button id="goPremium" class="ghost">Remove ads — $4.99</button>
+      </div>
       <h2>Settings</h2>
       <p style="font-size:13px">Set the game up the way you like. Everything here is remembered.</p>
       <div class="net">
@@ -596,9 +726,12 @@
     <table id="tally"></table>
     <p id="accuracy"></p>
     <p id="eUnlock" style="font-weight:bold;color:var(--pine)"></p>
+    <div class="adslot" id="adResults"></div>
     <button id="retryBtn">Hunt again</button>
-    <button id="lodgeBtn" class="link">Back to the lodge</button>
-    <button id="endMenuBtn" class="link">Main menu</button>
+    <div class="endRow">
+      <button id="lodgeBtn" class="ghost">Back to the lodge</button>
+      <button id="endMenuBtn" class="ghost">Main menu</button>
+    </div>
   </div>
 </div>
 
@@ -648,7 +781,7 @@ function applyControlMode(){
   const ui=$('touchUI'); if(ui)ui.classList.toggle('on',TOUCH_UI);
   if($('ctlMouse'))$('ctlMouse').classList.toggle('hidden',TOUCH_UI);
   if($('ctlTouch'))$('ctlTouch').classList.toggle('hidden',!TOUCH_UI&&!IS_TOUCH);
-  applyLayoutPrefs();
+  applyLayoutPrefs(); refreshAds();
   const vs=$('volSlider'); if(vs){ vs.value=Math.round((save.vol==null?.85:save.vol)*100); setTxt('volLabel',vs.value+'%'); }
   const rb=$('runMode'); if(rb)rb.textContent='Auto-run: '+(save&&save.autoRun?'ON (Shift walks)':'off');
   const b=$('ctrlMode'); if(b)b.textContent='Controls: '+(pref==='auto'?('Auto ('+(TOUCH_UI?'touch':'keyboard')+')'):pref==='touch'?'Touch':'Keyboard & mouse');
@@ -874,9 +1007,71 @@ const sfxClick=(w,p)=>tone(p,0.06,0.15,'square',w);
 // ---------- save / upgrades ----------
 const SAVE0=()=>({cash:0,xp:0,best:0,up:{scope:0,rifle:0,mag:0,lungs:0,bow:0,camo:0,scent:0,boots:0,quiver:0},stars:{},tot:{kills:0,bowKills:0,bears:0,longest:0,species:{},bestWave:0,trophies:0,perfect:0,hunts:0,arenaWins:0,bestArena:0},badges:{},name:'',server:'',room:'',token:'',controls:'auto',autoRun:false,skills:{marks:0,arch:0,stealth:0,track:0},inv:{},provisions:0,chalBest:{},log:{},records:{longest:0,bestSingle:0,bestDay:0},legends:{},contracts:null,contractsDone:0,vol:0.85,hideKeys:false,tutorialDone:false,lefty:false,btnSize:'normal',hudScale:'normal'});
 let save=SAVE0();
-try{ const s=localStorage.getItem('ridgeline2'); if(s){ const o=JSON.parse(s); save={...save,...o,up:{...save.up,...(o.up||{})},stars:{...(o.stars||{})},tot:{...save.tot,...(o.tot||{}),species:{...((o.tot||{}).species||{})}},badges:{...(o.badges||{})}};
+let hadLocalSave=false;
+try{ const s=localStorage.getItem('ridgeline2'); if(s){ hadLocalSave=true; const o=JSON.parse(s); save={...save,...o,up:{...save.up,...(o.up||{})},stars:{...(o.stars||{})},tot:{...save.tot,...(o.tot||{}),species:{...((o.tot||{}).species||{})}},badges:{...(o.badges||{})}};
     save.skills={marks:0,arch:0,stealth:0,track:0,...(save.skills||{})}; save.inv=save.inv||{}; save.provisions=save.provisions|0; save.chalBest=save.chalBest||{}; save.log=save.log||{}; save.records={longest:0,bestSingle:0,bestDay:0,...(save.records||{})}; save.legends=save.legends||{}; save.contractsDone=save.contractsDone|0; save.vol=(save.vol==null?.85:+save.vol); save.lefty=!!save.lefty; save.btnSize=save.btnSize||'normal'; save.hudScale=save.hudScale||'normal'; save.hideKeys=!!save.hideKeys; save.tutorialDone=!!save.tutorialDone; save.controls=save.controls||'auto'; save.autoRun=!!save.autoRun; save.token=save.token||''; save.name=save.name||''; save.server=save.server||''; save.room=save.room||''; save.xp=+save.xp||0; save.cash=+save.cash||0; save.best=+save.best||0; } }catch(e){}
-function persist(){ try{localStorage.setItem('ridgeline2',JSON.stringify(save));}catch(e){} }
+// ============================================================================
+// SET THIS once you have deployed server/ somewhere (Railway, Render, Fly).
+// Use the wss:// form of the address. Leave it empty and the game runs fully
+// offline with progress kept on the device.
+//   e.g. const DEFAULT_SERVER = 'wss://ridgeline-server.up.railway.app';
+// ============================================================================
+const DEFAULT_SERVER = '';
+
+// Guests play a full game but nothing is written down — no local save, no
+// cloud. Only an account keeps progress and puts you on the leaderboards.
+let GUEST=false;
+// ---------------------------------------------------------------------------
+// ADS AND AD-FREE
+// Slots are real containers in the page, never over the game itself — the title
+// screen footer, the lodge between sections, and the results screen. They only
+// exist when the player is not ad-free, so the ad-free experience has no gaps
+// where a banner used to be.
+//
+// To switch ads on, set AD_PROVIDER and drop your network's script tag into
+// index.html's <head>. Each slot calls fillAdSlot(el) so you can hand the
+// element to whatever your network expects.
+// ---------------------------------------------------------------------------
+const AD_PROVIDER = '';          // '' = show a quiet house placeholder instead
+const AD_PRICE = '$4.99';
+function isPremium(){ return !!(account&&account.premium) || (!GUEST&&!!save.premium); }
+function adsOn(){ return !isPremium(); }
+function fillAdSlot(el){
+  if(!AD_PROVIDER){
+    el.innerHTML='<div class="adInner"><span class="adTag">Advertisement</span>'+
+      '<p>This space keeps the game free.</p>'+
+      '<button class="adBuy">Remove ads — '+AD_PRICE+'</button></div>';
+    const b=el.querySelector('.adBuy'); if(b)b.addEventListener('click',startCheckout);
+    return;
+  }
+  // your ad network takes over from here
+  el.innerHTML='';
+  try{ window.dispatchEvent(new CustomEvent('ridgeline-ad',{detail:{slot:el}})); }catch(e){}
+}
+function refreshAds(){
+  const on=adsOn();
+  document.querySelectorAll('.adslot').forEach(el=>{
+    el.style.display=on?'':'none';
+    if(on&&!el.dataset.filled){ el.dataset.filled='1'; fillAdSlot(el); }
+  });
+  const pb=$('goPremium');
+  if(pb)pb.style.display=on?'':'none';
+  const ps=$('premiumState');
+  if(ps)setTxt('premiumState', isPremium()?'Ad-free is active on this account. Thank you.'
+    : GUEST?'Ad-free needs an account so the purchase has somewhere to live.'
+    : 'Removing ads is '+AD_PRICE+', once, and it stays with your account.');
+}
+async function startCheckout(){
+  if(!httpBase()){ alert('Purchases need the game server to be set up first.'); return; }
+  if(GUEST||!account){ setTxt('premiumState','Create an account first — a purchase has to attach to one.'); showLodge(); showTab('Help'); return; }
+  try{
+    const j=await api('/api/checkout',{});
+    if(j.url){ location.href=j.url; return; }
+    setTxt('premiumState','Payments are not switched on yet on this server.');
+  }catch(e){ setTxt('premiumState', e.message||'Could not start checkout.'); }
+}
+function persist(){ if(GUEST)return; try{localStorage.setItem('ridgeline2',JSON.stringify(save));}catch(e){} }
+function accountsAvailable(){ return !!(save.server||DEFAULT_SERVER); }
 const RANKS=[{xp:0,n:'Greenhorn'},{xp:900,n:'Novice'},{xp:2200,n:'Woodsman'},{xp:4000,n:'Tracker'},{xp:6600,n:'Guide'},{xp:10000,n:'Outfitter'},{xp:14500,n:'Master Hunter'},{xp:20000,n:'Legend of the Ridge'}];
 function rankIdx(){ let i=0; for(let k=0;k<RANKS.length;k++)if(save.xp>=RANKS[k].xp)i=k; return i; }
 function rankName(){ return RANKS[rankIdx()].n; }
@@ -1063,11 +1258,11 @@ function checkBadges(){ for(const b of BADGES){ if(!save.badges[b.id]&&b.test(sa
 
 // ---------- species ----------
 const SP={
-  deer:  {name:'Whitetail deer',k:1.15,body:'#9a6b3c',belly:'#dcc7a8',pts:100,flee:7.5,legH:.62,bodyY:.82,rx:.7,ry:.28,neck:1,antlers:'deer',weight:34,hp:1,sight:45,hear:40,smell:70,shape:'deer'},
-  boar:  {name:'Wild boar',k:1.05,body:'#3a2f29',belly:'#5a4c42',pts:150,flee:8.5,legH:.38,bodyY:.6,rx:.7,ry:.33,neck:.4,antlers:null,weight:20,hp:1.5,sight:30,hear:35,smell:80,shape:'deer',charge:8,dmg:30},
-  elk:   {name:'Bull elk',k:1.45,body:'#7a5233',belly:'#e3d1b0',pts:250,flee:7,legH:.66,bodyY:.86,rx:.72,ry:.3,neck:1,antlers:'elk',weight:16,hp:1.8,sight:55,hear:45,smell:75,shape:'deer'},
-  moose: {name:'Bull moose',k:1.85,body:'#3f2c20',belly:'#5c4633',pts:400,flee:6,legH:.7,bodyY:.9,rx:.72,ry:.32,neck:.9,antlers:'moose',weight:7,hp:2.5,sight:40,hear:35,smell:60,shape:'deer'},
-  sheep: {name:'Bighorn ram',k:1.1,body:'#8d7b62',belly:'#e9e0cf',pts:320,flee:8,legH:.55,bodyY:.75,rx:.62,ry:.29,neck:.7,antlers:'horns',weight:8,hp:1.2,sight:70,hear:40,smell:50,shape:'deer'},
+  deer:  {name:'Whitetail deer',k:1.15,body:'#9a6b3c',belly:'#dcc7a8',pts:100,flee:8.8,legH:.62,bodyY:.82,rx:.7,ry:.28,neck:1,antlers:'deer',weight:34,hp:1,sight:45,hear:40,smell:70,shape:'deer'},
+  boar:  {name:'Wild boar',k:1.05,body:'#3a2f29',belly:'#5a4c42',pts:150,flee:9.4,legH:.38,bodyY:.6,rx:.7,ry:.33,neck:.4,antlers:null,weight:20,hp:1.5,sight:30,hear:35,smell:80,shape:'deer',charge:8,dmg:30},
+  elk:   {name:'Bull elk',k:1.45,body:'#7a5233',belly:'#e3d1b0',pts:250,flee:8.6,legH:.66,bodyY:.86,rx:.72,ry:.3,neck:1,antlers:'elk',weight:16,hp:1.8,sight:55,hear:45,smell:75,shape:'deer'},
+  moose: {name:'Bull moose',k:1.85,body:'#3f2c20',belly:'#5c4633',pts:400,flee:8.8,legH:.7,bodyY:.9,rx:.72,ry:.32,neck:.9,antlers:'moose',weight:7,hp:2.5,sight:40,hear:35,smell:60,shape:'deer'},
+  sheep: {name:'Bighorn ram',k:1.1,body:'#8d7b62',belly:'#e9e0cf',pts:320,flee:9.2,legH:.55,bodyY:.75,rx:.62,ry:.29,neck:.7,antlers:'horns',weight:8,hp:1.2,sight:70,hear:40,smell:50,shape:'deer'},
   bear:  {name:'Black bear',k:1.35,body:'#2a2320',belly:'#3a3230',pts:500,flee:6.5,legH:.5,bodyY:.85,rx:.85,ry:.42,neck:.5,antlers:null,weight:8,hp:3,sight:35,hear:40,smell:90,shape:'bear',charge:9.5,dmg:55},
 };
 const SPECIES_KEYS=Object.keys(SP);
@@ -1323,6 +1518,8 @@ class WebSocketAdapter{
         else if(m.t==='states'){ for(const st of m.players||[]){ const p=this.map[st.id]; if(!p)continue; p.tx=st.x; p.tz=st.z; p.yaw=st.yaw; p.score=st.score|0; p.kills=st.kills|0; if(st.firing)p.firing=.25; }
           if(m.animals)applyRemoteAnimals(m.animals); if(typeof m.seconds==='number')timeLeft=m.seconds; }
         else if(m.t==='kill'&&m.id!==this.id&&this.onEvent)this.onEvent({t:'kill',name:m.name,species:m.species,points:m.points});
+        else if(m.t==='tagged'&&this.onEvent)this.onEvent({t:'tagged',tags:m.tags,score:m.score});
+        else if(m.t==='feed'&&this.onEvent)this.onEvent({t:'feed',name:m.name,text:m.text});
       };
     }); }
   tick(dt,self){ this.acc+=dt;
@@ -1390,9 +1587,30 @@ async function acctLogin(){ try{ save.server=$('pServer').value.trim(); persist(
   const j=await api('/api/login',{name:$('acctUser').value.trim(),password:$('acctPass').value}); save.token=j.token; account=j.user; save.name=account.name; persist(); acctUI();
   if(j.cloud&&confirm('Cloud backup found. Restore it over your local progress?')){ const keep={server:save.server,token:save.token}; save={...SAVE0(),...j.cloud,...keep}; persist(); renderLodge(); }
   setTxt('acctStatus','Signed in.'); loadLeaderboard(); } catch(e){ setTxt('acctStatus',e.message); } }
+async function downloadMyData(){
+  if(!account){ setTxt('dataState','Sign in first — guests have nothing stored to download.'); return; }
+  try{
+    const j=await api('/api/my-data');
+    const blob=new Blob([JSON.stringify(j,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='ridgeline-my-data.json'; a.click();
+    setTxt('dataState','Downloaded.');
+  }catch(e){ setTxt('dataState',e.message); }
+}
+async function deleteMyAccount(){
+  if(!account){ setTxt('dataState','Sign in first — guests have no account to delete.'); return; }
+  const pw=prompt('This permanently deletes '+account.name+' and everything in it.\n\nType your password to confirm:');
+  if(!pw)return;
+  try{
+    await api('/api/delete-account',{password:pw});
+    save.token=''; account=null; try{localStorage.removeItem('ridgeline2');}catch(e){}
+    save=SAVE0(); persist(); alert('Your account and everything in it has been deleted.');
+    location.reload();
+  }catch(e){ setTxt('dataState',e.message); }
+}
 async function acctLogout(){ try{ await api('/api/logout',{}); }catch(e){} save.token=''; account=null; persist(); acctUI(); setTxt('acctStatus','Signed out.'); }
 async function acctSync(){ try{ const {token,...rest}=save; await api('/api/cloud',{save:rest}); setTxt('acctStatus','Progress backed up.'); }catch(e){ setTxt('acctStatus',e.message); } }
-async function acctResume(){ if(!save.token||!httpBase())return; try{ const j=await api('/api/me'); account=j.user; acctUI(); loadLeaderboard(); }catch(e){ save.token=''; persist(); } }
+async function acctResume(){ if(!save.token||!httpBase())return; try{ const j=await api('/api/me'); account=j.user; save.premium=!!(j.user&&j.user.premium); acctUI(); refreshAds(); loadLeaderboard(); }catch(e){ save.token=''; persist(); } }
 let lbBy='bestArena';
 async function loadLeaderboard(){ if(!httpBase()){ setHtml('lbOut','Enter a server address to load leaderboards.'); return; }
   try{ const j=await api('/api/leaderboard?by='+lbBy);
@@ -2064,13 +2282,33 @@ cv.addEventListener('mousemove',e=>{ if(!running)return; usedMouse=true;
   edgeTurn = fx<band ? -(1-fx/band) : fx>1-band ? (1-(1-fx)/band) : 0;
 });
 cv.addEventListener('mouseleave',()=>{ edgeTurn=0; });
+// Every mouse button is accounted for. The side buttons matter most: browsers
+// map them to Back and Forward, so an idle thumb press mid-hunt would navigate
+// away from the game entirely.
 cv.addEventListener('mousedown',e=>{ if(!running)return; e.preventDefault(); usedMouse=true;
   if(document.pointerLockElement!==cv)tryLock();
-  if(e.button===0)fire();
-  // Right button TOGGLES the scope rather than being held. Holding it made the
-  // browser's context menu appear and stole the mouse out of the game.
-  if(e.button===2){ if(COND&&COND.id==='iron')noScopeNote(); else scoped=!scoped; } });
-cv.addEventListener('mouseup',e=>{ if(e.button===2)e.preventDefault(); });
+  if(e.button===0)fire();                                   // left  — shoot
+  if(e.button===1)swapWeapon();                             // middle — swap rifle/bow
+  if(e.button===2){ if(COND&&COND.id==='iron')noScopeNote(); else scoped=!scoped; }  // right — scope
+  if(e.button===3)reload();                                 // back   — reload (never navigate)
+  if(e.button===4){ if(breath>0)breathHold=true; }          // forward — hold breath
+});
+cv.addEventListener('mouseup',e=>{ if(e.button===2||e.button===1)e.preventDefault();
+  if(e.button===4)breathHold=false; });
+// Middle-click autoscroll, and Back/Forward on the side buttons, are blocked
+// page-wide while a hunt is running.
+addEventListener('mousedown',e=>{ if(running&&(e.button===1||e.button===3||e.button===4))e.preventDefault(); },{capture:true});
+addEventListener('auxclick',e=>{ if(running&&e.button!==0)e.preventDefault(); },{capture:true});
+// The wheel swaps weapons while hunting, and never scrolls or zooms the page.
+addEventListener('wheel',e=>{
+  if(!running||paused)return;
+  e.preventDefault();
+  const now=performance.now();
+  if(now-lastWheel<180)return;                              // one swap per flick, not per notch
+  lastWheel=now;
+  swapWeapon();
+},{passive:false,capture:true});
+let lastWheel=0;
 // Block the context menu across the whole page while playing, not just on the
 // canvas — a stray right-click anywhere used to break mouse capture.
 // Block the browser's right-click menu everywhere except inside text fields, so
@@ -2116,14 +2354,16 @@ let keyDebug=false;
 function onKeyDown(e){
   if(typingInField())return;
   const names=keyNames(e); for(const n of names)keys[n]=true;
+  const repeat=!!e.repeat;   // held-key auto-repeat: movement still applies, toggles must not
   lastKeySeen=names.join('/')+' ('+(e.key||'?')+')';
   const has=c=>names.includes(c);
   if(has('ArrowUp')||has('ArrowDown')||has('ArrowLeft')||has('ArrowRight')||has('Space'))e.preventDefault();
-  if(has('Escape')){ if(paused)resumeGame(); else if(canPause())pauseGame(); return; }
+  if(has('Escape')){ if(!repeat){ if(paused)resumeGame(); else if(canPause())pauseGame(); } return; }
   if(paused)return;
   if(!running)return;
   if(has('KeyR'))reload();
   if(has('Space'))breathHold=true;
+  if(repeat)return;          // everything below is a toggle or a one-shot action
   if(has('KeyC'))P.crouch=!P.crouch;
   if(has('Digit1')&&!(LV&&LV.bowOnly&&mode==='hunt'))weapon='rifle';
   if(has('Digit2'))weapon='bow';
@@ -2131,7 +2371,8 @@ function onKeyDown(e){
   if(has('KeyF')){ if(COND&&COND.id==='iron')noScopeNote(); else scoped=!scoped; }
   if(has('KeyH')&&running&&provLeft>0&&health<100){ provLeft--; health=Math.min(100,health+55); lastHurt=0;
     callout={text:'Provisions used',sub:'health restored · '+provLeft+' left',c:'#7cff5a',t:2}; tone(440,.2,.2,'sine'); tone(660,.25,.2,'sine',.12); }
-  if(has('KeyK')){ save.hideKeys=!save.hideKeys; persist(); }
+  if(has('KeyK')){ save.hideKeys=!save.hideKeys; persist();
+    callout={text:save.hideKeys?'Controls hidden':'Controls shown',sub:'press K to toggle',c:'#7cff5a',t:1.6}; }
   if(has('KeyE')){ autoRun=!autoRun; save.autoRun=autoRun; persist(); callout={text:autoRun?'Auto-run ON':'Auto-run off',sub:autoRun?'Hold Shift to walk':'Hold Shift to run',c:'#7cff5a',t:1.6}; }
   if(has('Enter'))fire();
 }
@@ -2180,7 +2421,7 @@ function updatePlayer(dt){
   const turnKeys=(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0)+(keys.Period?1:0)-(keys.Comma?1:0);
   if(turnKeys||edgeTurn) P.yaw += (turnKeys*1.9 + edgeTurn*2.4) * dt / Math.max(1,zoom*0.5);
   let spd=0;
-  if(mag>0.05){ const tired=clamp(P.stamina/25,0,1); let want=P.crouch?1.9:(sprint&&P.stamina>0?lerp(5.0,7.8,tired):3.9);
+  if(mag>0.05){ const tired=clamp(P.stamina/25,0,1); let want=P.crouch?2.2:(sprint&&P.stamina>0?lerp(5.6,8.4,tired):4.3);
     if(TAMP>0){ const sl=terrSlope(P.x,P.z,Math.sin(P.yaw+Math.atan2(mv.x,mv.y)),Math.cos(P.yaw+Math.atan2(mv.x,mv.y)));
       want*=clamp(1-sl*.55,.62,1.16); }
     spd=want*Math.min(1,mag);
@@ -2190,10 +2431,10 @@ function updatePlayer(dt){
     for(const b of deco){ if(b.type!=='boulder')continue; const R=1.1+b.seed*1.2, dx=nx-b.x, dz=nz-b.z, d=Math.hypot(dx,dz); if(d<R&&d>0.001){ nx=b.x+dx/d*R; nz=b.z+dz/d*R; } }
     const dd=Math.hypot(nx,nz); if(dd>MAP_R){ nx*=MAP_R/dd; nz*=MAP_R/dd; warn=warn&&warn.text.startsWith('BEAR')?warn:{text:'Edge of the hunting lease',t:1}; }
     P.x=nx; P.z=nz;
-    if(spd>4.2&&sprint)P.stamina=Math.max(0,P.stamina-11*dt);
-    stepT+=spd*dt; if(stepT>1.6){ stepT=0; if(!P.crouch)sfxStep(); if(sprint&&spd>4.2)particles.push({x:cx+rnd(-30,30),y:H*.82,vx:rnd(-20,20),vy:-rnd(10,30),life:.5,c:'#c9bb96',sz:rnd(4,9),smoke:true}); }
+    if(spd>4.7&&sprint)P.stamina=Math.max(0,P.stamina-10.5*dt);
+    stepT+=spd*dt; if(stepT>1.7){ stepT=0; if(!P.crouch)sfxStep(); if(sprint&&spd>4.2)particles.push({x:cx+rnd(-30,30),y:H*.82,vx:rnd(-20,20),vy:-rnd(10,30),life:.5,c:'#c9bb96',sz:rnd(4,9),smoke:true}); }
   }
-  if(!(spd>4.2&&sprint))P.stamina=Math.min(100,P.stamina+(upg('lungs')?22:17)*dt);
+  if(!(spd>4.7&&sprint))P.stamina=Math.min(100,P.stamina+(upg('lungs')?24:18)*dt);
   lastHurt+=dt; if(lastHurt>4)health=Math.min(100,health+6*dt); hurtFlash=Math.max(0,hurtFlash-dt*1.5);
   if(stuck.length){
     let got=0;
@@ -2207,7 +2448,7 @@ function updatePlayer(dt){
   }
   if(quiverFullMsg>0)quiverFullMsg=Math.max(0,quiverFullMsg-dt);
   P.speed=spd; P.bob+=spd*dt*2.2; const targetEye=(P.crouch?1.0:1.6)+Math.sin(P.bob)*spd*0.012; P.eye+=(targetEye-P.eye)*Math.min(1,dt*8);
-  if(scoped&&spd>4.2)scoped=false;
+  if(scoped&&spd>4.7)scoped=false;
 }
 
 // ---------- HUD ----------
@@ -2397,7 +2638,7 @@ function drawControls(){
   ctx.fillStyle='#ff8a3d'; ctx.font='bold 12px Courier New,monospace'; ctx.textAlign='left';
   ctx.fillText('CONTROLS',x0+pad,y0+pad+8);
   ctx.fillStyle='rgba(255,255,255,.5)'; ctx.font='10px Courier New,monospace';
-  ctx.fillText('left-click fire · right-click scope · K hides this',x0+pad+92,y0+pad+8);
+  ctx.fillText('left fire · right scope · middle or wheel swaps · K hides this',x0+pad+92,y0+pad+8);
   CONTROLS.forEach(([keys,label],i)=>{
     const col=i%2, row=Math.floor(i/2);
     let kx=x0+pad+col*colW, ky=y0+pad+30+row*lh;
@@ -2453,7 +2694,7 @@ function drawHUD(){
   // stamina + crouch
   ctx.fillStyle='rgba(255,255,255,.2)'; ctx.fillRect(ax,ay+6,110,5); ctx.fillStyle=P.stamina<35?'#e05a3a':'#7cff5a'; ctx.fillRect(ax,ay+6,110*P.stamina/100,5);
   ctx.font='11px Trebuchet MS,sans-serif';
-  const running_=sprint&&P.speed>4.2, gait=P.crouch?'Crouched':running_?'RUNNING':'Walking';
+  const running_=sprint&&P.speed>4.7, gait=P.crouch?'Crouched':running_?'RUNNING':'Walking';
   ctx.fillStyle=P.stamina<20?'#ff8c3b':running_?'#7cff5a':'rgba(241,235,220,.8)';
   ctx.fillText(gait+(P.stamina<20?' · out of breath':P.stamina<50?' · winded':'')+(autoRun?' · auto-run':''),ax+118,ay+11);
 
@@ -2561,6 +2802,7 @@ function frame(now){
       persist();
       score+=Math.round(SP[a.sp].pts*.15); addSkill('track',40); contractProgress('harvest',null,1);
       if(mode==='chal'&&CHAL&&CHAL.id==='tagged')chalScore++;
+      if(arenaAuth&&NETA&&a.id)NETA.emit({t:'tag',id:a.id});
       callout={text:'Harvested — '+SP[a.sp].name,sub:parts.join(', ')+'  ·  sell or craft at the lodge',c:'#7cff5a',t:3};
       pushFeed('Harvested '+SP[a.sp].name.toLowerCase(),parts.join(', '),'#7cff5a');
       tone(520,.2,.2,'triangle'); tone(780,.25,.2,'triangle',.1); } }
@@ -2771,7 +3013,164 @@ function renderLodge(){
   $('survBtn').disabled=!su; $('survBtn').style.opacity=su?1:.5;
 }
 function showTab(n){ ['Hunts','Shop','Chal','Career','Guide','Help'].forEach(k=>{ $('pane'+k).classList.toggle('on',k===n); $('tab'+k).classList.toggle('on',k===n); }); }
-let titleUp=true, paused=false;
+let titleUp=true, paused=false, entryMode='in';
+// ---------------------------------------------------------------------------
+// SET THIS to the address people should use to reach you about their data.
+// A privacy policy without a contact route is not much of a policy.
+const CONTACT_EMAIL = 'you@example.com';
+const LEGAL={
+  privacy:{title:'Privacy',body:`
+    <p><b>The short version.</b> If you play as a guest, nothing about you is stored anywhere.
+    If you make an account, the game stores the name you chose, a scrambled version of your
+    password that cannot be turned back into the password, and your hunting progress. Nothing
+    is sold, and nothing is shared with anyone.</p>
+
+    <h2>Playing as a guest</h2>
+    <p>Nothing is written to your device and nothing is sent that identifies you. The game
+    counts that "a session happened" using a random number that exists only until you close
+    the tab. It is never linked to you and never stored against a person.</p>
+
+    <h2>If you create an account</h2>
+    <p>Stored on the game's own server:</p>
+    <ul>
+      <li>The hunter name you picked. Use a nickname — it is shown on leaderboards.</li>
+      <li>Your password, put through a one-way scramble (scrypt) with a unique salt. Nobody,
+      including the people running the game, can read it.</li>
+      <li>A one-way scramble of your recovery code, for the same reason.</li>
+      <li>Your progress: rank, cash, gear, skills, stars, trophies, records.</li>
+      <li>When you last played, so the game can show who is active.</li>
+      <li>Whether you have paid to remove ads.</li>
+    </ul>
+    <p>No email address is asked for, because there is nothing to send you. No real name, no
+    age, no location, no address book, no contacts.</p>
+
+    <h2>What is not collected</h2>
+    <p>No tracking pixels. No analytics companies. No advertising profile. No cookies for
+    tracking — your progress is kept in your own browser's storage, which never leaves your
+    device unless you have an account to sync it to. Your IP address is used only to rate-limit
+    abuse in the moment and is not written down.</p>
+
+    <h2>Payments</h2>
+    <p>If you pay to remove ads, the payment is handled entirely by Stripe or PayPal. Your card
+    details never touch this game's server — it only learns that an account was paid for.</p>
+
+    <h2>Ads</h2>
+    <p>If advertising is switched on, the ad provider may set its own cookies and use its own
+    tracking, under its own policy, which is outside this game's control. Removing ads removes
+    the ad code with it.</p>
+
+    <h2>Children</h2>
+    <p>The game is suitable for most ages and does not knowingly collect anything from
+    children. Because no personal details are ever requested, an account holds nothing more
+    than a nickname and a score.</p>
+
+    <h2>Your data is yours</h2>
+    <p>Signed in, you can <b>download everything held about you</b> or <b>delete your account
+    outright</b> from the Progress tab. Deletion is immediate and permanent: the account, its
+    progress, its leaderboard entries and its activity records all go, and cannot be recovered.</p>
+
+    <h2>Keeping it safe</h2>
+    <p>Passwords are salted and hashed, sign-in is rate limited, and sign-in tokens expire after
+    thirty days. No system is perfect — use a password you do not use anywhere important.</p>
+
+    <h2>Asking about your data</h2>
+    <p>Write to <b>${CONTACT_EMAIL}</b>.</p>`},
+
+  terms:{title:'Terms',body:`
+    <h2>The deal</h2>
+    <p>The game is free to play. You may play it for fun as much as you like. Do not try to
+    break the servers, cheat the leaderboards, or pass the game off as your own.</p>
+
+    <h2>Accounts</h2>
+    <p>Keep your password to yourself. You are responsible for what happens under your account.
+    Accounts that cheat leaderboards, or use offensive names, may be removed without notice.</p>
+
+    <h2>Progress is not a possession</h2>
+    <p>Progress, cash, gear and trophies exist inside a game. They have no real-world value,
+    cannot be exchanged for money, and may be reset if something goes badly wrong. Guest
+    progress is not saved at all — that is stated before you choose it.</p>
+
+    <h2>Paying to remove ads</h2>
+    <p>Removing ads is a one-off payment tied to your account. It removes advertising; it does
+    not change the game. If it does not work, write and it will be sorted or refunded.</p>
+
+    <h2>No promises</h2>
+    <p>The game is provided as it is. It may have bugs, it may go offline, and it may change.
+    It is a hunting game, not a service anyone depends on.</p>
+
+    <h2>Hunting</h2>
+    <p>This is fiction. The animals are drawings. Nothing here is advice about real hunting,
+    real firearms, or real wildlife, and real hunting is governed by real laws where you live.</p>
+
+    <h2>Getting in touch</h2>
+    <p>Write to <b>${CONTACT_EMAIL}</b>.</p>`}
+};
+function showLegal(which){
+  const L=LEGAL[which]||LEGAL.privacy;
+  setTxt('legalTitle',L.title); setHtml('legalBody',L.body);
+  $('legal').classList.remove('hidden');
+}
+function showEntry(){
+  $('entry').classList.remove('hidden');
+  $('title').classList.add('hidden'); $('lodge').classList.add('hidden');
+  const have=accountsAvailable();
+  $('eAccount').style.display=have?'':'none';
+  if(!have){
+    setTxt('eIntro','Track it, take it clean, carry it out.');
+    setTxt('eGuestNote','Accounts are not set up for this copy of the game, so your progress is kept on this device instead. Clearing your browser data will clear it.');
+    $('eGuest').textContent=hadLocalSave?'Continue':'Start hunting';
+  }
+  updateEntryTabs();
+}
+function updateEntryTabs(){
+  const up=entryMode==='up';
+  $('eTabIn').classList.toggle('on',!up); $('eTabUp').classList.toggle('on',up);
+  $('eGo').textContent=up?'Create account':'Sign in';
+  setTxt('eStatus',up?'Pick any name. Eight characters or more for the password.'
+                    :'An account saves your progress, stats and leaderboard place on every device.');
+}
+function enterGame(){
+  $('entry').classList.add('hidden');
+  showTitle(); refreshAds();
+}
+async function entrySubmit(){
+  const name=$('eUser').value.trim(), pw=$('ePass').value;
+  if(!save.server&&DEFAULT_SERVER){ save.server=DEFAULT_SERVER; }
+  setTxt('eStatus', entryMode==='up'?'Creating your account…':'Signing in…');
+  try{
+    const j=await api(entryMode==='up'?'/api/register':'/api/login',{name,password:pw});
+    save.token=j.token; account=j.user; save.name=account.name; GUEST=false; save.premium=!!(j.user&&j.user.premium);
+    if(j.recoveryCode)showRecovery(j.recoveryCode);
+    if(j.cloud){ const keep={server:save.server,token:save.token,vol:save.vol,lefty:save.lefty,btnSize:save.btnSize,hudScale:save.hudScale,controls:save.controls,autoRun:save.autoRun};
+      save={...SAVE0(),...j.cloud,...keep}; }
+    persist(); acctUI(); applyLayoutPrefs();
+    sendEvent(entryMode==='up'?'signup':'signin');
+    enterGame();
+  }catch(e){ setTxt('eStatus', e.message||'That did not work. Check the name and password.'); }
+}
+// There is no email on file, so this code is the only route back into an
+// account. It is shown once and never again.
+function showRecovery(code){
+  setTxt('recCode',code);
+  $('recovery').classList.remove('hidden');
+  $('entry').classList.add('hidden');
+}
+function playAsGuest(){
+  if(accountsAvailable()){ GUEST=true; save=SAVE0(); save.server=DEFAULT_SERVER||save.server; }
+  GUESTREADY=true; sendEvent('guest_start'); enterGame();
+}
+let GUESTREADY=false;
+// Anonymous, aggregate-only telemetry so the admin page can show how the game
+// is being played. No personal data; guests are counted by a random id that
+// only lives for this tab.
+const SESSION_ID=Math.random().toString(36).slice(2,12);
+async function sendEvent(type,data){
+  const base=httpBase(); if(!base)return;
+  try{
+    await fetch(base+'/api/event',{method:'POST',headers:{'Content-Type':'application/json',...(save.token?{Authorization:'Bearer '+save.token}:{})},
+      body:JSON.stringify({type,session:SESSION_ID,guest:GUEST,data:data||{}})});
+  }catch(e){}
+}
 function canPause(){ return running&&!dying; }
 // "Iron sights" is a daily condition that leaves the scope at the lodge. Without
 // a word of explanation it just looks like the aim button is broken.
@@ -2882,6 +3281,8 @@ function showTitle(){
   setTxt('tRank',rankName()); setTxt('tCash','$'+save.cash.toLocaleString());
   const st=Object.values(save.stars||{}).reduce((a,b)=>a+b,0);
   setTxt('tStars',st+' / 42 stars');
+  setTxt('tGuest', GUEST?'Playing as guest — nothing is being saved':'');
+  if($('tGuest'))$('tGuest').style.display=GUEST?'':'none';
   setTxt('tBlurb', st===0
     ? (save.tutorialDone?'Fourteen hunts across four regions. Track it, take it clean, carry it out.':'New here? Take the guided hunt first — it teaches you everything in about a minute.')
     : 'Welcome back. '+st+' of 42 stars earned — there is still country you have not worked.');
@@ -2893,7 +3294,7 @@ function playNext(){
   lvlSel=next.id; hideTitle(); audio(); startDay();
 }
 function showLodge(){ paused=false; $('pauseMenu').classList.add('hidden'); updateChrome(); TUT=null; hideTitle(); if(NETA){NETA.stop();NETA=null;} CHAL=null; arenaAuth=false; remoteAnimals=new Map(); LV=null; rivals=[]; renderLodge(); $('lodge').classList.remove('hidden'); $('endScreen').classList.add('hidden'); $('deathScreen').classList.add('hidden'); }
-function startDay(){ if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=LEVELS.find(x=>x.id===lvlSel)||LEVELS[0]; mode='hunt'; audio(); resetDay(); running=true;
+function startDay(){ sendEvent('hunt_start',{hunt:lvlSel}); if(document.activeElement&&document.activeElement.blur)document.activeElement.blur(); if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=LEVELS.find(x=>x.id===lvlSel)||LEVELS[0]; mode='hunt'; audio(); resetDay(); running=true;
   $('lodge').classList.add('hidden'); $('endScreen').classList.add('hidden'); tryLock();
   if(COND){ warn={text:COND.name.toUpperCase(),t:3.2}; callout={text:COND.name,sub:COND.desc,c:'#e0b45a',t:5}; } }
 function startSurvival(){ if(!survUnlocked())return; if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=null; mode='surv'; audio(); resetDay(); animals=[]; fogDay=1; running=true; $('lodge').classList.add('hidden'); tryLock(); waveClear=true; waveT=3; warn={text:'Get ready',t:3}; }
@@ -2939,6 +3340,8 @@ function onNetEvent(ev){
   if(ev.t==='start'){ timeLeft=ev.seconds; score=0; stats.kills={}; stats.shots=0; stats.hits=0; arenaEnded=false; running=true; warn={text:'MATCH START',t:2.5}; return; }
   if(ev.t==='end'){ endArena(ev.board); return; }
   if(ev.t==='error'){ callout={text:ev.message||'Server error',sub:'',c:'#ff3b1f',t:3}; return; }
+  if(ev.t==='tagged'){ score=ev.score; pushFeed('Tagged — '+ev.tags+' this match','','#7cff5a'); return; }
+  if(ev.t==='feed'){ pushFeed(ev.name+' '+ev.text,'','#d8d0b8'); return; }
   if(ev.t==='kill'){ pushFeed(ev.name+' took a '+(ev.species||'animal').toLowerCase(),'+'+ev.points,'#d8d0b8'); const a=remoteAnimals.get(ev.animal); if(a){a.state='dead';a.deadT=0;} return; }
   if(ev.t==='joined')pushFeed(ev.name+' joined the arena','','#7cff5a');
   else if(ev.t==='left')pushFeed(ev.name+' left','','#c98a6b');
@@ -2957,7 +3360,7 @@ function endArena(serverBoard){
   setTxt('endSub',arenaAuth?('Online arena · '+(board.length-1)+' other hunter'+(board.length===2?'':'s')+(NETA&&NETA.guest?' · guest, not recorded':' · recorded to your account')):'Open arena · 3 rival hunters');
   setTxt('endStars',place===1?'★★★':place===2?'★★☆':'★☆☆');
   setTxt('finalScore',score); setTxt('eCash','+$'+cashEarn); setTxt('eXp','+'+xpEarn+' XP'); setTxt('eRank',rankName());
-  setHtml('eGoals',board.map((b,i)=>`<div class="goal"><span class="s">${i+1}.</span> <b style="${b.you?'color:#ff6a13':''}">${b.name}</b> — ${b.score} pts, ${b.kills} harvests</div>`).join(''));
+  setHtml('eGoals',board.map((b,i)=>`<div class="goal"><span class="s">${i+1}.</span> <b style="${b.you?'color:#ff6a13':''}">${b.name}</b> — ${(b.kills||0)+(b.tags||0)} brought in <span style="color:var(--faint)">(${b.kills||0} shot, ${b.tags||0} tagged · ${b.score} pts)</span></div>`).join(''));
   setHtml('tally','');
   setTxt('accuracy',stats.shots?`${stats.shots} shots, ${stats.hits} hits — ${Math.round(stats.hits/stats.shots*100)}% accuracy.`:'You never fired a shot.');
   setTxt('eUnlock',place===1?'You out-hunted the field.':'Best arena score so far: '+save.tot.bestArena);
@@ -3010,6 +3413,7 @@ function endDay(){
   const mult=[0,1,1.4,2][st], prevStars=starsFor(LV.id), prevRank=rankIdx();
   const cpay=COND?COND.pay:1;
   const cashEarn=Math.round((cashDay+LV.cash*mult)*cpay), xpEarn=Math.round((LV.xp*mult)*cpay)+ls.total*25+stats.trophies*80;
+  sendEvent('hunt_end',{hunt:LV.id,stars:st,score:score});
   save.cash+=cashEarn; save.xp+=xpEarn; save.best=Math.max(save.best,score);
   if(st>prevStars)save.stars[LV.id]=st;
   if(st>0&&prevStars===0)save.tot.hunts++;
@@ -3035,6 +3439,21 @@ $('tabHunts').addEventListener('click',()=>showTab('Hunts'));
 $('tabShop').addEventListener('click',()=>showTab('Shop'));
 $('tabChal').addEventListener('click',()=>showTab('Chal'));
 $('tabCareer').addEventListener('click',()=>showTab('Career'));
+$('eTabIn').addEventListener('click',()=>{ entryMode='in'; updateEntryTabs(); });
+$('eTabUp').addEventListener('click',()=>{ entryMode='up'; updateEntryTabs(); });
+$('eGo').addEventListener('click',()=>{ audio(); entrySubmit(); });
+$('ePass').addEventListener('keydown',e=>{ if(e.key==='Enter'){ audio(); entrySubmit(); } });
+$('eGuest').addEventListener('click',()=>{ audio(); playAsGuest(); });
+$('recCopy').addEventListener('click',()=>{ const t=$('recCode').textContent;
+  try{ navigator.clipboard.writeText(t); $('recCopy').textContent='Copied'; }catch(e){ $('recCopy').textContent=t; } });
+$('recGo').addEventListener('click',()=>{ $('recovery').classList.add('hidden'); enterGame(); });
+$('eTerms').addEventListener('click',e=>{ e.preventDefault(); showLegal('terms'); });
+$('ePrivacy').addEventListener('click',e=>{ e.preventDefault(); showLegal('privacy'); });
+$('legalBack').addEventListener('click',()=>$('legal').classList.add('hidden'));
+$('lnkPrivacy').addEventListener('click',e=>{ e.preventDefault(); showLegal('privacy'); });
+$('lnkTerms').addEventListener('click',e=>{ e.preventDefault(); showLegal('terms'); });
+$('myData').addEventListener('click',downloadMyData);
+$('delAccount').addEventListener('click',deleteMyAccount);
 $('playBtn').addEventListener('click',playNext);
 $('menuBtn').addEventListener('click',()=>{ audio(); showTitle(); });
 $('pauseBtn').addEventListener('click',e=>{ e.preventDefault(); e.stopPropagation(); pauseGame(); });
@@ -3053,6 +3472,7 @@ $('survBtn').addEventListener('click',startSurvival);
 $('arenaBtn').addEventListener('click',()=>startArena(false));
 $('arenaOnlineBtn').addEventListener('click',()=>startArena(true));
 $('tutBtn').addEventListener('click',startTutorial);
+$('goPremium').addEventListener('click',startCheckout);
 $('optLefty').addEventListener('click',()=>{ save.lefty=!save.lefty; persist(); applyLayoutPrefs(); });
 $('optBtn').addEventListener('click',()=>{ const o=['small','normal','large']; save.btnSize=o[(o.indexOf(save.btnSize||'normal')+1)%3]; persist(); applyLayoutPrefs(); });
 $('optHud').addEventListener('click',()=>{ const o=['small','normal','large']; save.hudScale=o[(o.indexOf(save.hudScale||'normal')+1)%3]; persist(); applyLayoutPrefs(); });
@@ -3080,7 +3500,7 @@ $('lodgeBtn').addEventListener('click',showLodge);
 $('retryBtn').addEventListener('click',()=>{ if(mode==='chal'&&CHAL)startChallenge(CHAL.id); else if(LV)startDay(); else if(mode==='arena')startArena(arenaOnline); else showLodge(); });
 $('deathBtn').addEventListener('click',showLodge);
 $('resetBtn').addEventListener('click',()=>{ if(confirm('Wipe all cash, XP, stars and upgrades?')){ save=SAVE0(); lvlSel=1; persist(); renderLodge(); } });
-applyControlMode(); applyLayoutPrefs(); buildWorld(); showLodge(); showTitle(); requestAnimationFrame(frame);
+applyControlMode(); applyLayoutPrefs(); buildWorld(); showLodge(); showEntry(); requestAnimationFrame(frame);
 })();
 </script>
 </body>
