@@ -102,6 +102,45 @@
   .eLegal a,#dataState a,.net a{color:var(--gold);text-decoration:underline}
   .eLegal{margin-top:14px;font-size:12px}
 
+  /* ---- the arena: the one screen that has to sell itself ---- */
+  .arenaHero{position:relative;margin-top:16px;padding:26px 24px 24px;border-radius:14px;overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 80% 0%, rgba(255,106,31,.22), transparent 62%),
+      linear-gradient(170deg, rgba(34,46,36,.92), rgba(10,15,11,.96));
+    border:1px solid rgba(255,106,31,.35);
+    box-shadow:0 22px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06)}
+  .arenaLiveRow{display:flex;align-items:center;gap:8px;font-family:var(--type);font-size:11px;
+    letter-spacing:2.2px;text-transform:uppercase;color:#7cff5a}
+  .arenaLiveRow .dot{width:8px;height:8px;border-radius:50%;background:#7cff5a;
+    box-shadow:0 0 0 0 rgba(124,255,90,.7);animation:pulseDot 2s infinite}
+  @keyframes pulseDot{0%{box-shadow:0 0 0 0 rgba(124,255,90,.6)}70%{box-shadow:0 0 0 9px rgba(124,255,90,0)}100%{box-shadow:0 0 0 0 rgba(124,255,90,0)}}
+  .arenaTitle{font-family:var(--disp);font-size:clamp(34px,7vw,56px);line-height:.86;font-weight:bold;
+    letter-spacing:-1.5px;text-transform:uppercase;color:#fff;margin:14px 0 0;
+    text-shadow:0 6px 30px rgba(0,0,0,.8)}
+  .arenaTitle em{display:block;font-style:normal;color:transparent;
+    -webkit-text-stroke:2px var(--blaze);text-stroke:2px var(--blaze)}
+  .arenaSub{font-size:15px;line-height:1.5;color:#d5ddd4;max-width:430px;margin-top:14px}
+  .arenaGo{margin-top:20px;width:100%;padding:20px;font-size:19px;letter-spacing:2.4px;
+    box-shadow:0 6px 0 #8f2c00,0 16px 40px rgba(255,84,0,.38)}
+  .arenaStatus{font-size:12.5px;color:var(--dim);margin-top:10px;min-height:16px;text-align:center}
+  .arenaHow{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
+  .arenaHow div{flex:1;min-width:110px;background:rgba(255,255,255,.05);border:1px solid var(--line);
+    border-radius:9px;padding:11px 12px}
+  .arenaHow b{display:block;font-family:var(--type);font-size:12px;color:var(--blaze);letter-spacing:2px}
+  .arenaHow span{display:block;font-size:12.5px;color:#c6d1c6;margin-top:4px;line-height:1.35}
+  .arenaMore{width:auto;margin:18px auto 0;display:block;padding:10px 18px;font-size:11.5px;
+    letter-spacing:1.4px;background:none;color:var(--faint);border:1px solid var(--line);
+    box-shadow:none;text-transform:uppercase}
+  .arenaMore:hover{background:rgba(255,255,255,.05);color:#fff;filter:none}
+  .arenaOpts{display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  .arenaOpts.on{display:block}
+  .arenaOpts label{display:block;font-family:var(--type);font-size:9.5px;color:var(--faint);
+    margin-top:10px;text-transform:uppercase;letter-spacing:1.5px}
+  .arenaOpts input{width:100%;padding:12px;margin-top:5px;font-family:var(--sans);font-size:16px;
+    border:1px solid var(--line);border-radius:6px;background:rgba(0,0,0,.45);color:var(--ink)}
+  .arenaOpts input:focus{outline:none;border-color:var(--blaze);box-shadow:0 0 0 3px rgba(255,106,31,.2)}
+  @media (max-width:620px){ .arenaHero{padding:22px 16px 20px} .arenaHow div{min-width:100%} }
+
   /* ---- ad slots ----
      In the page flow, never over the game. They collapse to nothing when the
      player is ad-free, so there is no leftover gap. */
@@ -617,25 +656,32 @@
       <div class="shop" id="chalList"></div>
       <h2>Leaderboard</h2>
       <div class="tabs" style="margin-top:4px"><button data-cb="chalLong" class="on">Long Shot</button><button data-cb="chalKills">Full Bag</button><button data-cb="chalTags">Field Dressing</button></div>
-      <div id="cbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Enter a server address below to load.</div>
+      <div id="cbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Loading…</div>
       
       <h2>Wave survival — hold your ground</h2>
       <p style="font-size:13px" id="survNote"></p>
       <button id="survBtn" class="ghost">Wave mode</button>
       <h2>Open arena — hunt against other people</h2>
       <p style="font-size:13px" id="arenaNote"></p>
-      <div class="net">
-        <button id="arenaOnlineBtn">Join a match</button>
-        <p id="netStatus" style="font-size:12.5px;color:var(--muted);min-height:16px">Three minutes, everything is fair game, most animals brought in wins.</p>
-        <details style="margin-top:10px">
-          <summary style="font-size:12px;color:var(--faint);cursor:pointer">Play with friends, or change your name</summary>
-          <label>Hunter name <input id="pName" maxlength="14" placeholder="Hunter"></label>
-          <label>Room — share this word and you will be in the same match
+      <div class="arenaHero">
+        <div class="arenaLiveRow"><span class="dot"></span><span id="liveCount">Looking for hunters…</span></div>
+        <h3 class="arenaTitle">OPEN<em>ARENA</em></h3>
+        <p class="arenaSub">Three minutes. Everything is fair game. Whoever brings in the most animals wins.</p>
+        <button id="arenaOnlineBtn" class="arenaGo">Join a match</button>
+        <p id="netStatus" class="arenaStatus"></p>
+        <div class="arenaHow">
+          <div><b>01</b><span>Shoot what you can</span></div>
+          <div><b>02</b><span>Walk out and tag it</span></div>
+          <div><b>03</b><span>Most brought in wins</span></div>
+        </div>
+        <button id="arenaMore" class="arenaMore">Play with friends</button>
+        <div class="arenaOpts" id="arenaOpts">
+          <label>Your name <input id="pName" maxlength="14" placeholder="Hunter"></label>
+          <label>Room code — share it and you are in the same match
             <input id="pRoom" maxlength="8" placeholder="RIDGE"></label>
-          <button id="arenaBtn" class="ghost">Practise offline instead</button>
-          <label style="margin-top:12px">Server (leave alone unless you run your own)
-            <input id="pServer" placeholder="uses the game's own server"></label>
-        </details>
+          <button id="arenaBtn" class="ghost">Practise against bots</button>
+          <input id="pServer" type="hidden">
+        </div>
       </div>
       <h2>Account</h2>
       <div class="net" id="acctBox">
@@ -644,7 +690,7 @@
           <div class="netrow"><button id="acctSync" class="ghost" style="margin-top:8px">Back up progress to cloud</button><button id="acctLogout" class="link">Sign out</button></div>
         </div>
         <div id="acctIn">
-          <p style="font-size:12px;color:var(--muted)">An account keeps your stats on the server and puts you on the leaderboards. Needs the Server address in the arena section above.</p>
+          <p style="font-size:12px;color:var(--muted)">An account saves your progress and puts you on the leaderboards. It follows you to any device you play on.</p>
           <div class="netrow"><label>Username <input id="acctUser" maxlength="14" autocomplete="username"></label><label>Password <input id="acctPass" type="password" minlength="8" autocomplete="current-password"></label></div>
           <div class="netrow"><button id="acctLogin" class="ghost">Sign in</button><button id="acctRegister" class="ghost">Create account</button></div>
         </div>
@@ -654,7 +700,7 @@
       <div class="tabs" style="margin-top:4px"><button data-lbs="1" class="on">This week</button><button data-lbs="0">All time</button></div>
       <div class="tabs" style="margin-top:6px"><button data-lb="bestArena" class="on">Arena score</button><button data-lb="arenaWins">Arena wins</button><button data-lb="harvests">Harvests</button><button data-lb="campaignStars">Stars</button></div>
       <p id="lbSeason" style="font-size:12px;color:var(--gold);margin-top:8px"></p>
-      <div id="lbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Sign in or enter a server to load.</div>
+      <div id="lbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Sign in to see where you stand.</div>
     </div>
 
     
@@ -1617,7 +1663,7 @@ const RIVAL_COLORS=['#e2542b','#2b7fe2','#8e2be2','#e2c02b','#2be29a','#e22b7f']
 let NETA=null;
 function serverURL(){ return ((save.server||'').trim())||DEFAULT_SERVER||''; }
 function httpBase(){ const s=serverURL(); if(!s)return ''; return s.replace(/^wss:/,'https:').replace(/^ws:/,'http:').replace(/\/+$/,''); }
-async function api(path,body,method){ const base=httpBase(); if(!base)throw new Error('No server address set');
+async function api(path,body,method){ const base=httpBase(); if(!base)throw new Error('Cannot reach the game server right now');
   const r=await fetch(base+path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json',...(save.token?{Authorization:'Bearer '+save.token}:{})},body:body?JSON.stringify(body):undefined});
   const j=await r.json().catch(()=>({})); if(!r.ok)throw new Error(j.error||('HTTP '+r.status)); return j; }
 function acctUI(){ const on=!!account;
@@ -1657,15 +1703,15 @@ let liveTimer=null;
 async function pollPresence(){
   const base=httpBase();
   const el=$('liveCount'), t=$('titleLive');
-  if(!base){ if(el)setTxt('liveCount','Set a server address below to play online.'); if(t)t.style.display='none'; return; }
+  if(!base){ if(el)setTxt('liveCount','A match is ready when you are'); if(t)t.style.display='none'; return; }
   try{
     const j=await fetch(base+'/api/status').then(r=>r.json());
     const n=j.players|0, a=j.accounts|0;
     if(el)setTxt('liveCount', n>0
-      ? (n===1?'1 hunter is out there right now':n+' hunters are out there right now')
-      : (a>0? a+' hunters registered — none online this minute':'Be the first one out there'));
+      ? (n===1?'1 hunter out there now':n+' hunters out there now')
+      : 'A match is ready when you are');
     if(t){ t.style.display=n>0?'':'none'; setTxt('titleLive', n+(n===1?' hunter online':' hunters online')); }
-  }catch(e){ if(el)setTxt('liveCount','Could not reach the server.'); if(t)t.style.display='none'; }
+  }catch(e){ if(el)setTxt('liveCount','A match is ready when you are'); if(t)t.style.display='none'; }
 }
 function startPresence(){ if(liveTimer)clearInterval(liveTimer); pollPresence(); liveTimer=setInterval(pollPresence,20000); }
 async function checkServerCapabilities(){
@@ -1676,7 +1722,7 @@ async function checkServerCapabilities(){
 }
 async function acctResume(){ if(!save.token||!httpBase())return; try{ const j=await api('/api/me'); account=j.user; save.premium=!!(j.user&&j.user.premium); acctUI(); refreshAds(); loadLeaderboard(); }catch(e){ save.token=''; persist(); } }
 let lbBy='bestArena', lbSeason=1;
-async function loadLeaderboard(){ if(!httpBase()){ setHtml('lbOut','Enter a server address to load leaderboards.'); return; }
+async function loadLeaderboard(){ if(!httpBase()){ setHtml('lbOut','Leaderboards load once you are signed in.'); return; }
   try{ const j=await api('/api/leaderboard?by='+lbBy+'&season='+lbSeason);
     if(j.season&&j.endsAt){ const hrs=Math.max(0,(j.endsAt-Date.now())/3600000);
       setTxt('lbSeason','Season '+j.seasonKey+' — resets in '+(hrs>48?Math.round(hrs/24)+' days':Math.round(hrs)+' hours')+'. Everyone starts level on Monday.'); }
@@ -3493,14 +3539,13 @@ async function startArena(online){
   persist();
   let adapter;
   if(online){ const url=serverURL();
-    if(!url){ setTxt('netStatus','This copy of the game has no server set up, so the arena runs against bots.'); }
-    else {
+    if(url){
       setTxt('netStatus','Finding a match…');
       adapter=new WebSocketAdapter(url,save.room||'RIDGE',save.name||'Hunter'); } }
   if(!adapter)adapter=new LocalAIAdapter(3);
   let info;
   try{ info=await adapter.start(); }
-  catch(err){ setTxt('netStatus','Could not connect: '+err.message+'. Playing offline against bots instead.');
+  catch(err){ setTxt('netStatus','Starting a practice match…');
     adapter=new LocalAIAdapter(3); info=await adapter.start(); }
   NETA=adapter; NETA.onEvent=onNetEvent;
   arenaAuth=!!info.auth; remoteAnimals=new Map();
@@ -3513,7 +3558,7 @@ async function startArena(online){
   running=true; if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
   $('lodge').classList.add('hidden'); $('endScreen').classList.add('hidden'); tryLock();
   warn={text:(arenaOnline?'ONLINE ARENA · '+(save.room||'RIDGE'):'ARENA')+' — most points in 3 minutes',t:4};
-  setTxt('netStatus',arenaOnline?('Connected · room '+(save.room||'RIDGE')+' · map '+codeFromSeed(info.seed)+(info.guest?' · playing as guest (sign in to record stats)':' · stats recorded')):'Offline match against bots.');
+  setTxt('netStatus',arenaOnline?('In room '+(save.room||'RIDGE')+(info.guest?' · sign in to keep your score':'')):'Practice match');
 }
 function onNetEvent(ev){
   if(ev.t==='shotResult'){ if(!ev.ok){ callout={text:'Shot rejected',sub:ev.why||'',c:'#e0b45a',t:1.5}; return; }
@@ -3658,6 +3703,8 @@ $('tabHelp').addEventListener('click',()=>showTab('Help'));
 $('survBtn').addEventListener('click',startSurvival);
 $('arenaBtn').addEventListener('click',()=>startArena(false));
 $('arenaOnlineBtn').addEventListener('click',()=>startArena(true));
+$('arenaMore').addEventListener('click',()=>{ const o=$('arenaOpts'), open=o.classList.toggle('on');
+  $('arenaMore').textContent=open?'Hide options':'Play with friends'; });
 $('tutBtn').addEventListener('click',startTutorial);
 $('goPremium').addEventListener('click',startCheckout);
 // Chrome and Edge hand us an install prompt; Safari and Firefox do not, so we
@@ -3688,7 +3735,7 @@ $('volSlider').addEventListener('input',e=>{ const v=+e.target.value/100; setVol
 $('ctrlMode').addEventListener('click',()=>{ const order=['auto','touch','keyboard']; save.controls=order[(order.indexOf(save.controls||'auto')+1)%3]; persist(); applyControlMode(); });
 $('runMode').addEventListener('click',()=>{ save.autoRun=!save.autoRun; autoRun=save.autoRun; persist(); $('runMode').textContent='Auto-run: '+(save.autoRun?'ON (Shift walks)':'off'); });
 let cbBy='chalLong';
-async function loadChalBoard(){ if(!httpBase()){ setHtml('cbOut','Enter a server address below to load leaderboards.'); return; }
+async function loadChalBoard(){ if(!httpBase()){ setHtml('cbOut','Leaderboards load once you are signed in.'); return; }
   try{ const j=await api('/api/leaderboard?by='+cbBy);
     const unit={chalLong:'m',chalKills:'harvests',chalTags:'tagged'}[j.by];
     setHtml('cbOut', j.rows.filter(r=>r[j.by]>0).length
