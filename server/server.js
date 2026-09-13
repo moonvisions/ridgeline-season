@@ -366,11 +366,24 @@ setInterval(function(){ if(KEY&&document.getElementById('dash').style.display!==
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
+
+  // Some hosts (DigitalOcean App Platform among them) strip the route prefix
+  // before forwarding, so a request for /api/status arrives here as /status and
+  // nothing matches. Accept both shapes, so the game works whether or not the
+  // proxy trims the path.
+  if (!url.pathname.startsWith('/api')) {
+    const BARE = ['/status', '/register', '/login', '/me', '/logout', '/cloud',
+      '/leaderboard', '/seasons', '/challenge', '/event', '/entitlement',
+      '/checkout', '/stripe-webhook', '/paypal-capture', '/my-data', '/delete-account',
+      '/admin/users', '/admin/rooms', '/admin/stats', '/admin/premium',
+      '/admin/reset', '/admin/backup'];
+    if (BARE.includes(url.pathname)) url.pathname = '/api' + url.pathname;
+  }
   const ip = ipOf(req);
   if (req.method === 'OPTIONS') return json(res, 204, {});
   try {
     if (url.pathname === '/' || url.pathname === '/api/status') {
-      return json(res, 200, { ok: true, players: [...rooms.values()].reduce((a, r) => a + r.players.size, 0), rooms: rooms.size, accounts: Object.keys(DB.users).length, payments: !!(STRIPE_KEY && STRIPE_WEBHOOK_SECRET) || !!(PAYPAL_ID && PAYPAL_SECRET) });
+      return json(res, 200, { ok: true, players: [...rooms.values()].reduce((a, r) => a + realCount(r), 0), rooms: rooms.size, accounts: Object.keys(DB.users).length, payments: !!(STRIPE_KEY && STRIPE_WEBHOOK_SECRET) || !!(PAYPAL_ID && PAYPAL_SECRET) });
     }
     if (url.pathname === '/api/register' && req.method === 'POST') {
       if (limited('reg:' + ip, 5, 3600e3)) return json(res, 429, { error: 'Too many sign-ups from this address. Try later.' });
@@ -390,7 +403,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/login' && req.method === 'POST') {
       if (limited('login:' + ip, 20, 900e3)) return json(res, 429, { error: 'Too many attempts. Wait 15 minutes.' });
       const b = await readBody(req);
-      const u = DB.users[String(b.name || '').toLowerCase()];
+      const u = DB.users[String(b.name || '').trim().toLowerCase()];
       if (!u || !verifyPassword(String(b.password || ''), u)) return json(res, 401, { error: 'Wrong name or password' });
       u.lastSeen = Date.now(); persist();
       return json(res, 200, { token: issueToken(u.name), user: publicStats(u), cloud: u.cloud });
@@ -398,7 +411,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/recover' && req.method === 'POST') {
       if (limited('rec:' + ip, 10, 3600e3)) return json(res, 429, { error: 'Too many attempts. Try later.' });
       const b = await readBody(req);
-      const u = DB.users[String(b.name || '').toLowerCase()];
+      const u = DB.users[String(b.name || '').trim().toLowerCase()];
       const code = String(b.code || '').toUpperCase().trim();
       const pw = String(b.password || '');
       if (pw.length < 8) return json(res, 400, { error: 'New password must be at least 8 characters' });
@@ -634,7 +647,7 @@ const server = http.createServer(async (req, res) => {
       // can read it back to them; it never reveals or sets a password.
       if (url.pathname === '/api/admin/reset' && req.method === 'POST') {
         const b = await readBody(req);
-        const u = DB.users[String(b.name || '').toLowerCase()];
+        const u = DB.users[String(b.name || '').trim().toLowerCase()];
         if (!u) return json(res, 404, { error: 'No such account' });
         const code = makeRecoveryCode(), h = hashPassword(code);
         u.recSalt = h.salt; u.recHash = h.hash;
@@ -646,7 +659,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === '/api/admin/premium' && req.method === 'POST') {
         const b = await readBody(req);
-        const u = DB.users[String(b.name || '').toLowerCase()];
+        const u = DB.users[String(b.name || '').trim().toLowerCase()];
         if (!u) return json(res, 404, { error: 'No such account' });
         u.premium = b.premium !== false;
         u.premiumSince = u.premium ? Date.now() : 0;
@@ -655,7 +668,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { name: u.name, premium: u.premium });
       }
     }
-    if (url.pathname === '/admin' || url.pathname === '/admin/') {
+    if (url.pathname === '/admin' || url.pathname === '/admin/' || url.pathname === '/api/admin') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(ADMIN_PAGE);
     }
@@ -764,6 +777,80 @@ function adminOk(given) {
   if (a.length !== b.length) return false;
   try { return crypto.timingSafeEqual(a, b); } catch (e) { return false; }
 }
+const BOT_NAMES = ['Dale', 'Marisol', 'Otis', 'Rennick', 'Sable', 'Hutch', 'Wren', 'Cobb'];
+const BOT_COLORS = ['#e2542b', '#2b7fe2', '#8e2be2', '#e2c02b', '#2be29a', '#e22b7f'];
+const MIN_PARTICIPANTS = 4;           // a match should never feel empty
+function realCount(room) { let n = 0; for (const p of room.players.values()) if (!p.bot) n++; return n; }
+function addBot(room) {
+  const used = new Set([...room.players.values()].map(p => p.name));
+  const name = BOT_NAMES.find(n => !used.has(n)) || ('Hunter' + (nextPid % 99));
+  const a = Math.random() * Math.PI * 2, d = 40 + Math.random() * 60;
+  const b = {
+    id: 'b' + (nextPid++), name, bot: true, user: null,
+    color: BOT_COLORS[room.players.size % BOT_COLORS.length],
+    x: Math.sin(a) * d, z: Math.cos(a) * d, yaw: a,
+    score: 0, kills: 0, tags: 0, trophies: 0, longest: 0, firing: 0,
+    lastShot: -9, lastState: Date.now(),
+    skill: 0.45 + Math.random() * 0.3, cool: 3 + Math.random() * 5, ws: null,
+  };
+  room.players.set(b.id, b);
+  broadcast(room, { t: 'joined', player: { id: b.id, name: b.name, color: b.color, bot: true } });
+  return b;
+}
+function dropBot(room) {
+  for (const p of room.players.values()) {
+    if (!p.bot) continue;
+    room.players.delete(p.id);
+    broadcast(room, { t: 'left', id: p.id });
+    return true;
+  }
+  return false;
+}
+// Keep the headcount sensible: top up with bots, retire them as people arrive.
+function balanceBots(room) {
+  const real = realCount(room);
+  if (real === 0) {                       // nobody here: no need to simulate anyone
+    while (dropBot(room));
+    return;
+  }
+  const want = Math.max(0, MIN_PARTICIPANTS - real);
+  let bots = room.players.size - real;
+  while (bots < want) { addBot(room); bots++; }
+  while (bots > want) { if (!dropBot(room)) break; bots--; }
+}
+function stepBot(room, b, dt) {
+  b.firing = 0;
+  let best = null, bd = 1e9;
+  for (const a of room.animals) {
+    if (a.state === 'dead') continue;
+    const d = Math.hypot(a.x - b.x, a.z - b.z);
+    if (d < bd) { bd = d; best = a; }
+  }
+  if (!best) { b.x += Math.sin(b.yaw) * 1.6 * dt; b.z += Math.cos(b.yaw) * 1.6 * dt; return; }
+  const want = Math.atan2(best.x - b.x, best.z - b.z);
+  b.yaw += wrap(want - b.yaw) * Math.min(1, dt * 1.8);
+  if (bd > 16) {
+    b.x += Math.sin(b.yaw) * 3.6 * dt;
+    b.z += Math.cos(b.yaw) * 3.6 * dt;
+    const rr = Math.hypot(b.x, b.z);
+    if (rr > MAP_R - 10) { b.x *= (MAP_R - 10) / rr; b.z *= (MAP_R - 10) / rr; b.yaw += Math.PI; }
+    return;
+  }
+  b.cool -= dt;
+  if (b.cool > 0) return;
+  b.cool = 3 + Math.random() * 5;
+  b.firing = 1;
+  spook(room, b.x, b.z, 90);
+  if (Math.random() < b.skill) {
+    const sp = SP[best.sp];
+    best.state = 'dead'; best.deadT = 0; best.speed = 0;
+    const pts = Math.round(sp.pts * (1 + bd / 100));
+    b.score += pts; b.kills++;
+    broadcast(room, { t: 'kill', id: b.id, name: b.name, species: best.sp, points: pts, animal: best.id });
+    setTimeout(() => { if (rooms.has(room.name)) { room.animals = room.animals.filter(x => x.id !== best.id); room.animals.push(spawnAnimal(room)); } }, 5000);
+    if (Math.random() < 0.6) { b.tags++; best.tagged = true; }   // bots walk theirs out too, sometimes
+  }
+}
 const rooms = new Map();
 let nextPid = 1;
 function getRoom(name) {
@@ -776,8 +863,8 @@ function getRoom(name) {
   r.emptiedAt = 0;
   return r;
 }
-function send(ws, o) { if (ws.readyState === 1) ws.send(JSON.stringify(o)); }
-function broadcast(room, o, except) { const m = JSON.stringify(o); for (const p of room.players.values()) if (p.id !== except && p.ws.readyState === 1) p.ws.send(m); }
+function send(ws, o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+function broadcast(room, o, except) { const m = JSON.stringify(o); for (const p of room.players.values()) if (p.id !== except && p.ws && p.ws.readyState === 1) p.ws.send(m); }
 function startMatch(room) {
   room.running = true; room.time = 0; room.timeLeft = MATCH_SECONDS; room.animals = [];
   for (const p of room.players.values()) { p.score = 0; p.kills = 0; p.tags = 0; p.trophies = 0; p.longest = 0; }
@@ -788,10 +875,10 @@ function startMatch(room) {
 function endMatch(room) {
   room.running = false;
   const board = [...room.players.values()]
-    .map(p => ({ id: p.id, name: p.name, score: p.score, kills: p.kills, tags: p.tags, total: p.kills + p.tags }))
+    .map(p => ({ id: p.id, name: p.name, score: p.score, kills: p.kills, tags: p.tags | 0, total: p.kills + (p.tags | 0), bot: !!p.bot }))
     .sort((a, b) => b.total - a.total || b.score - a.score);
   for (const p of room.players.values()) {
-    if (!p.user) continue;                                    // guests are not recorded
+    if (p.bot || !p.user) continue;                            // bots and guests are not recorded
     const st = p.user.stats; st.arenaMatches++; st.arenaKills += p.kills; st.harvests += p.kills;
     st.trophies += p.trophies; st.longest = Math.max(st.longest, Math.round(p.longest));
     st.bestArena = Math.max(st.bestArena, p.score);
@@ -824,7 +911,7 @@ wss.on('connection', (ws, req) => {
             x: 0, z: 0, yaw: 0, score: 0, kills: 0, tags: 0, trophies: 0, longest: 0, firing: 0, lastShot: -9, lastState: Date.now() };
       room.players.set(p.id, p);
       send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
-                 players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color })) });
+                 players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
       broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
       if (!room.running) startMatch(room);
       else send(ws, { t: 'start', seconds: room.timeLeft });
@@ -869,6 +956,7 @@ wss.on('connection', (ws, req) => {
   });
   ws.on('close', () => {
     if (!p || !room) return;
+    if (p.bot) return;
     room.players.delete(p.id);
     broadcast(room, { t: 'left', id: p.id });
     if (room.players.size === 0) { room.emptiedAt = Date.now(); room.running = false; room.seed = (Math.random() * 0xffffffff) >>> 0; }
@@ -881,15 +969,17 @@ setInterval(() => {
   const dt = TICK_MS / 1000;
   for (const room of rooms.values()) {
     if (room.players.size === 0) continue;
+    balanceBots(room);
     if (room.running) {
       room.time += dt; room.timeLeft -= dt;
       for (const a of room.animals) updateAnimal(room, a, dt);
+      for (const p of room.players.values()) if (p.bot) stepBot(room, p, dt);
       if (room.timeLeft <= 0) endMatch(room);
     }
     broadcast(room, {
       t: 'states',
       seconds: Math.max(0, room.timeLeft),
-      players: [...room.players.values()].map(q => ({ id: q.id, x: +q.x.toFixed(2), z: +q.z.toFixed(2), yaw: +q.yaw.toFixed(2), score: q.score, kills: q.kills, tags: q.tags, firing: q.firing })),
+      players: [...room.players.values()].map(q => ({ id: q.id, x: +q.x.toFixed(2), z: +q.z.toFixed(2), yaw: +q.yaw.toFixed(2), score: q.score, kills: q.kills, tags: q.tags | 0, firing: q.firing, bot: !!q.bot })),
       animals: room.animals.map(a => ({ id: a.id, sp: a.sp, tg: a.tagged ? 1 : 0, x: +a.x.toFixed(2), z: +a.z.toFixed(2), h: +a.heading.toFixed(2), v: +a.speed.toFixed(1), st: a.state === 'dead' ? 'd' : a.state === 'flee' ? 'f' : a.state === 'walk' ? 'w' : 'g', hp: +(a.hp / a.maxhp).toFixed(2), tr: a.trophy ? 1 : 0, m: a.male ? 1 : 0, wd: a.wounded ? 1 : 0 })),
     });
     for (const q of room.players.values()) q.firing = 0;
