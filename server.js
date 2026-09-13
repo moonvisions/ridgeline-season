@@ -366,6 +366,19 @@ setInterval(function(){ if(KEY&&document.getElementById('dash').style.display!==
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
+
+  // Some hosts (DigitalOcean App Platform among them) strip the route prefix
+  // before forwarding, so a request for /api/status arrives here as /status and
+  // nothing matches. Accept both shapes, so the game works whether or not the
+  // proxy trims the path.
+  if (!url.pathname.startsWith('/api')) {
+    const BARE = ['/status', '/register', '/login', '/me', '/logout', '/cloud',
+      '/leaderboard', '/seasons', '/challenge', '/event', '/entitlement',
+      '/checkout', '/stripe-webhook', '/paypal-capture', '/my-data', '/delete-account',
+      '/admin/users', '/admin/rooms', '/admin/stats', '/admin/premium',
+      '/admin/reset', '/admin/backup'];
+    if (BARE.includes(url.pathname)) url.pathname = '/api' + url.pathname;
+  }
   const ip = ipOf(req);
   if (req.method === 'OPTIONS') return json(res, 204, {});
   try {
@@ -655,7 +668,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { name: u.name, premium: u.premium });
       }
     }
-    if (url.pathname === '/admin' || url.pathname === '/admin/') {
+    if (url.pathname === '/admin' || url.pathname === '/admin/' || url.pathname === '/api/admin') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(ADMIN_PAGE);
     }
