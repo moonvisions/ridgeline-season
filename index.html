@@ -620,7 +620,9 @@
         <p id="acctStatus" style="font-size:12px;color:var(--muted);min-height:16px"></p>
       </div>
       <h2>Leaderboards</h2>
-      <div class="tabs" style="margin-top:4px"><button data-lb="bestArena" class="on">Arena score</button><button data-lb="arenaWins">Arena wins</button><button data-lb="harvests">Harvests</button><button data-lb="campaignStars">Stars</button></div>
+      <div class="tabs" style="margin-top:4px"><button data-lbs="1" class="on">This week</button><button data-lbs="0">All time</button></div>
+      <div class="tabs" style="margin-top:6px"><button data-lb="bestArena" class="on">Arena score</button><button data-lb="arenaWins">Arena wins</button><button data-lb="harvests">Harvests</button><button data-lb="campaignStars">Stars</button></div>
+      <p id="lbSeason" style="font-size:12px;color:var(--gold);margin-top:8px"></p>
       <div id="lbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Sign in or enter a server to load.</div>
     </div>
 
@@ -677,11 +679,11 @@
       <h2>Learn by doing</h2>
       <p style="font-size:13px">A guided first hunt that walks you through looking, moving, aiming and harvesting one step at a time. Nothing to fail — each step waits until you have done it.</p>
       <button id="tutBtn">Play the guided hunt</button>
-      <h2>Ad-free</h2>
+      <div id="adFreeSection"><h2>Ad-free</h2>
       <div class="net">
         <p id="premiumState" style="font-size:13px;margin:0">Removing ads is $4.99, once, and it stays with your account.</p>
         <button id="goPremium" class="ghost">Remove ads — $4.99</button>
-      </div>
+      </div></div>
       <h2>Settings</h2>
       <p style="font-size:13px">Set the game up the way you like. Everything here is remembered.</p>
       <div class="net">
@@ -1011,16 +1013,25 @@ let hadLocalSave=false;
 try{ const s=localStorage.getItem('ridgeline2'); if(s){ hadLocalSave=true; const o=JSON.parse(s); save={...save,...o,up:{...save.up,...(o.up||{})},stars:{...(o.stars||{})},tot:{...save.tot,...(o.tot||{}),species:{...((o.tot||{}).species||{})}},badges:{...(o.badges||{})}};
     save.skills={marks:0,arch:0,stealth:0,track:0,...(save.skills||{})}; save.inv=save.inv||{}; save.provisions=save.provisions|0; save.chalBest=save.chalBest||{}; save.log=save.log||{}; save.records={longest:0,bestSingle:0,bestDay:0,...(save.records||{})}; save.legends=save.legends||{}; save.contractsDone=save.contractsDone|0; save.vol=(save.vol==null?.85:+save.vol); save.lefty=!!save.lefty; save.btnSize=save.btnSize||'normal'; save.hudScale=save.hudScale||'normal'; save.hideKeys=!!save.hideKeys; save.tutorialDone=!!save.tutorialDone; save.controls=save.controls||'auto'; save.autoRun=!!save.autoRun; save.token=save.token||''; save.name=save.name||''; save.server=save.server||''; save.room=save.room||''; save.xp=+save.xp||0; save.cash=+save.cash||0; save.best=+save.best||0; } }catch(e){}
 // ============================================================================
-// SET THIS once you have deployed server/ somewhere (Railway, Render, Fly).
-// Use the wss:// form of the address. Leave it empty and the game runs fully
-// offline with progress kept on the device.
-//   e.g. const DEFAULT_SERVER = 'wss://ridgeline-server.up.railway.app';
+//                        THE ONLY TWO THINGS TO EDIT
 // ============================================================================
+// 1. Your game server's address, in wss:// form, once it is deployed.
+//    Leave it empty and the game still works — it just runs without accounts,
+//    keeping progress on each player's own device.
+//      e.g. const DEFAULT_SERVER = 'wss://api.yourdomain.com';
 const DEFAULT_SERVER = '';
+
+// 2. The address people use to reach you about their data. It appears in the
+//    privacy policy and the terms. A policy with no contact route is not one.
+//      e.g. const CONTACT_EMAIL = 'hello@yourdomain.com';
+const CONTACT_EMAIL = 'daniel@moonvisionmedia.com';
+const OPERATOR      = 'Moon Vision Media';
+const POLICY_DATE   = 'September 2026';   // bump this whenever you change the policy
+// ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
 // cloud. Only an account keeps progress and puts you on the leaderboards.
-let GUEST=false;
+let GUEST=false, PAY_OK=false;
 // ---------------------------------------------------------------------------
 // ADS AND AD-FREE
 // Slots are real containers in the page, never over the game itself — the title
@@ -1037,25 +1048,21 @@ const AD_PRICE = '$4.99';
 function isPremium(){ return !!(account&&account.premium) || (!GUEST&&!!save.premium); }
 function adsOn(){ return !isPremium(); }
 function fillAdSlot(el){
-  if(!AD_PROVIDER){
-    el.innerHTML='<div class="adInner"><span class="adTag">Advertisement</span>'+
-      '<p>This space keeps the game free.</p>'+
-      '<button class="adBuy">Remove ads — '+AD_PRICE+'</button></div>';
-    const b=el.querySelector('.adBuy'); if(b)b.addEventListener('click',startCheckout);
-    return;
-  }
+  if(!AD_PROVIDER){ el.innerHTML=''; return; }
   // your ad network takes over from here
   el.innerHTML='';
   try{ window.dispatchEvent(new CustomEvent('ridgeline-ad',{detail:{slot:el}})); }catch(e){}
 }
 function refreshAds(){
-  const on=adsOn();
+  const on=adsOn()&&!!AD_PROVIDER;   // no network configured = no ad space shown
   document.querySelectorAll('.adslot').forEach(el=>{
     el.style.display=on?'':'none';
     if(on&&!el.dataset.filled){ el.dataset.filled='1'; fillAdSlot(el); }
   });
+  const canBuy=on&&PAY_OK;
   const pb=$('goPremium');
-  if(pb)pb.style.display=on?'':'none';
+  if(pb)pb.style.display=canBuy?'':'none';
+  const sec=$('adFreeSection'); if(sec)sec.style.display=(AD_PROVIDER||isPremium())?'':'none';
   const ps=$('premiumState');
   if(ps)setTxt('premiumState', isPremium()?'Ad-free is active on this account. Thank you.'
     : GUEST?'Ad-free needs an account so the purchase has somewhere to live.'
@@ -1607,10 +1614,19 @@ async function deleteMyAccount(){
 }
 async function acctLogout(){ try{ await api('/api/logout',{}); }catch(e){} save.token=''; account=null; persist(); acctUI(); setTxt('acctStatus','Signed out.'); }
 async function acctSync(){ try{ const {token,...rest}=save; await api('/api/cloud',{save:rest}); setTxt('acctStatus','Progress backed up.'); }catch(e){ setTxt('acctStatus',e.message); } }
+async function checkServerCapabilities(){
+  const base=httpBase(); if(!base)return;
+  try{ const r=await fetch(base+'/api/status'); const j=await r.json(); PAY_OK=!!j.payments; }
+  catch(e){ PAY_OK=false; }
+  refreshAds();
+}
 async function acctResume(){ if(!save.token||!httpBase())return; try{ const j=await api('/api/me'); account=j.user; save.premium=!!(j.user&&j.user.premium); acctUI(); refreshAds(); loadLeaderboard(); }catch(e){ save.token=''; persist(); } }
-let lbBy='bestArena';
+let lbBy='bestArena', lbSeason=1;
 async function loadLeaderboard(){ if(!httpBase()){ setHtml('lbOut','Enter a server address to load leaderboards.'); return; }
-  try{ const j=await api('/api/leaderboard?by='+lbBy);
+  try{ const j=await api('/api/leaderboard?by='+lbBy+'&season='+lbSeason);
+    if(j.season&&j.endsAt){ const hrs=Math.max(0,(j.endsAt-Date.now())/3600000);
+      setTxt('lbSeason','Season '+j.seasonKey+' — resets in '+(hrs>48?Math.round(hrs/24)+' days':Math.round(hrs)+' hours')+'. Everyone starts level on Monday.'); }
+    else setTxt('lbSeason','Every score ever posted.');
     const lab={bestArena:'Best arena',arenaWins:'Wins',harvests:'Harvests',campaignStars:'Stars'}[j.by];
     setHtml('lbOut',j.rows.length?'<table style="width:100%;border-collapse:collapse">'+j.rows.map((r,i)=>`<tr style="${account&&r.name===account.name?'color:#ff6a13;font-weight:bold':''}"><td style="padding:3px 0;border-bottom:1px dashed #b8b39f">${i+1}. ${r.name}</td><td style="text-align:right;border-bottom:1px dashed #b8b39f">${r[j.by]} ${lab}</td></tr>`).join('')+'</table>':'No entries yet.'); }
   catch(e){ setHtml('lbOut','Could not load: '+e.message); } }
@@ -3006,96 +3022,173 @@ function renderLodge(){
 }
 function showTab(n){ ['Hunts','Shop','Chal','Career','Guide','Help'].forEach(k=>{ $('pane'+k).classList.toggle('on',k===n); $('tab'+k).classList.toggle('on',k===n); }); }
 let titleUp=true, paused=false, entryMode='in';
-// ---------------------------------------------------------------------------
-// SET THIS to the address people should use to reach you about their data.
-// A privacy policy without a contact route is not much of a policy.
-const CONTACT_EMAIL = 'you@example.com';
 const LEGAL={
   privacy:{title:'Privacy',body:`
-    <p><b>The short version.</b> If you play as a guest, nothing about you is stored anywhere.
-    If you make an account, the game stores the name you chose, a scrambled version of your
-    password that cannot be turned back into the password, and your hunting progress. Nothing
-    is sold, and nothing is shared with anyone.</p>
+    <p><b>In one line:</b> play as a guest and nothing about you is stored anywhere. Make an
+    account and we keep a nickname, a scrambled password, and your hunting progress. We do not
+    sell anything about you, ever.</p>
+    <p style="color:var(--faint)">Last updated ${POLICY_DATE}. This game is run by ${OPERATOR}
+    ("we", "us"). Contact: <b>${CONTACT_EMAIL}</b>.</p>
 
-    <h2>Playing as a guest</h2>
-    <p>Nothing is written to your device and nothing is sent that identifies you. The game
-    counts that "a session happened" using a random number that exists only until you close
-    the tab. It is never linked to you and never stored against a person.</p>
+    <h2>1. Playing as a guest</h2>
+    <p>Nothing is written to your device and nothing identifying is sent to us. We count that
+    "a session happened" using a random number that exists only until you close the tab. It is
+    never linked to you and never stored against a person.</p>
 
-    <h2>If you create an account</h2>
-    <p>Stored on the game's own server:</p>
+    <h2>2. If you create an account</h2>
+    <p>We store, on our own server:</p>
     <ul>
-      <li>The hunter name you picked. Use a nickname — it is shown on leaderboards.</li>
-      <li>Your password, put through a one-way scramble (scrypt) with a unique salt. Nobody,
-      including the people running the game, can read it.</li>
-      <li>A one-way scramble of your recovery code, for the same reason.</li>
-      <li>Your progress: rank, cash, gear, skills, stars, trophies, records.</li>
-      <li>When you last played, so the game can show who is active.</li>
-      <li>Whether you have paid to remove ads.</li>
+      <li><b>Your hunter name.</b> Pick a nickname — it appears on leaderboards.</li>
+      <li><b>Your password, one-way scrambled</b> (scrypt, with a unique salt per account).
+      Nobody, including us, can read it or recover it.</li>
+      <li><b>A one-way scramble of your recovery code</b>, for the same reason.</li>
+      <li><b>Your progress:</b> rank, cash, gear, skills, stars, trophies, records, badges.</li>
+      <li><b>When you last played</b>, so the game can show who is active.</li>
+      <li><b>Whether you have paid to remove ads.</b></li>
     </ul>
-    <p>No email address is asked for, because there is nothing to send you. No real name, no
-    age, no location, no address book, no contacts.</p>
+    <p>We never ask for your real name, age, address, phone number, location or contacts, and
+    we do not ask for an email address.</p>
 
-    <h2>What is not collected</h2>
-    <p>No tracking pixels. No analytics companies. No advertising profile. No cookies for
-    tracking — your progress is kept in your own browser's storage, which never leaves your
-    device unless you have an account to sync it to. Your IP address is used only to rate-limit
-    abuse in the moment and is not written down.</p>
+    <h2>3. Anonymous usage counts</h2>
+    <p>We count things like hunts started, hunts finished, sign-ups and how many people played
+    on a given day, so we know whether the game is working. These are totals. They are not
+    joined to advertising profiles and are not shared with data brokers. Your IP address is used
+    only to rate-limit abuse in the moment and is not stored in our records.</p>
 
-    <h2>Payments</h2>
-    <p>If you pay to remove ads, the payment is handled entirely by Stripe or PayPal. Your card
-    details never touch this game's server — it only learns that an account was paid for.</p>
+    <h2>4. Storage on your device</h2>
+    <p>We use your browser's local storage to keep your progress and settings on your own
+    machine. That is not a tracking cookie, it never leaves your device on its own, and you can
+    clear it any time through your browser settings. Clearing it erases local progress.</p>
 
-    <h2>Ads</h2>
-    <p>If advertising is switched on, the ad provider may set its own cookies and use its own
-    tracking, under its own policy, which is outside this game's control. Removing ads removes
-    the ad code with it.</p>
+    <h2>5. Payments</h2>
+    <p>If you pay to remove ads, the payment is handled entirely by <b>Stripe</b> or
+    <b>PayPal</b> under their own privacy policies. Card numbers never reach our server — we
+    only learn that a given account has been paid for. We keep a record of that fact so your
+    purchase keeps working.</p>
 
-    <h2>Children</h2>
-    <p>The game is suitable for most ages and does not knowingly collect anything from
-    children. Because no personal details are ever requested, an account holds nothing more
-    than a nickname and a score.</p>
+    <h2>6. Advertising</h2>
+    <p>If advertising is switched on, the ad provider may set its own cookies or identifiers and
+    may use them for personalised advertising, under its own policy and outside our control.
+    Removing ads removes that code entirely. Where the law requires a consent prompt for
+    advertising cookies, the ad provider's own consent tool handles it.</p>
 
-    <h2>Your data is yours</h2>
-    <p>Signed in, you can <b>download everything held about you</b> or <b>delete your account
-    outright</b> from the Progress tab. Deletion is immediate and permanent: the account, its
-    progress, its leaderboard entries and its activity records all go, and cannot be recovered.</p>
+    <h2>7. Who else touches your data</h2>
+    <p>Only the services needed to run the game: our hosting provider (which stores the server
+    and its database), and a payment provider if you buy something. We do not sell, rent or
+    trade personal information to anyone, for any purpose, including advertising.</p>
 
-    <h2>Keeping it safe</h2>
-    <p>Passwords are salted and hashed, sign-in is rate limited, and sign-in tokens expire after
-    thirty days. No system is perfect — use a password you do not use anywhere important.</p>
+    <h2>8. Where your data lives</h2>
+    <p>Our servers may be located in a different country from you, so your information may be
+    processed outside your own country. By using the game you accept that. We apply the same
+    protections wherever it is held.</p>
 
-    <h2>Asking about your data</h2>
-    <p>Write to <b>${CONTACT_EMAIL}</b>.</p>`},
+    <h2>9. How long we keep it</h2>
+    <p>Account data is kept until you delete your account, at which point it is removed
+    immediately and permanently. Anonymous daily totals may be kept indefinitely because they
+    contain nothing that identifies anyone. Sign-in tokens expire after thirty days.</p>
+
+    <h2>10. Your rights</h2>
+    <p>Whatever country you are in, and regardless of which privacy law applies to you, you can:</p>
+    <ul>
+      <li><b>See everything we hold</b> — Progress tab → Download my data.</li>
+      <li><b>Delete it all</b> — Progress tab → Delete my account. Immediate and permanent.</li>
+      <li><b>Take it with you</b> — the download is plain JSON.</li>
+      <li><b>Correct it, or ask us questions</b> — write to ${CONTACT_EMAIL}.</li>
+    </ul>
+    <p>If you are in the UK or EU, our lawful basis is performing the service you asked for
+    (running your account) and our legitimate interest in keeping the game working and free of
+    abuse. If you are in California, we do not sell or share personal information as those terms
+    are defined, and we will not discriminate against you for exercising any right.</p>
+
+    <h2>11. Children</h2>
+    <p>The game is suitable for most ages and we do not knowingly collect personal information
+    from children. Because we never ask for personal details, an account holds nothing more than
+    a nickname and a score. If you believe a child has given us something that should not be
+    here, write to ${CONTACT_EMAIL} and we will remove it.</p>
+
+    <h2>12. Security</h2>
+    <p>Passwords are salted and hashed, traffic is encrypted in transit, sign-in and sign-up are
+    rate limited, and administrative access is protected by a separate key. No system is
+    perfect, so please use a password you do not use anywhere important. If something ever does
+    go wrong, we will say so plainly and quickly.</p>
+
+    <h2>13. Changes</h2>
+    <p>If this policy changes, the date at the top changes with it. Continuing to play after
+    that means you accept the new version.</p>
+
+    <h2>14. Contact</h2>
+    <p>${OPERATOR} — <b>${CONTACT_EMAIL}</b>. We answer data questions ourselves.</p>`},
 
   terms:{title:'Terms',body:`
-    <h2>The deal</h2>
-    <p>The game is free to play. You may play it for fun as much as you like. Do not try to
-    break the servers, cheat the leaderboards, or pass the game off as your own.</p>
+    <p style="color:var(--faint)">Last updated ${POLICY_DATE}. An agreement between you and
+    ${OPERATOR}. Contact: <b>${CONTACT_EMAIL}</b>.</p>
 
-    <h2>Accounts</h2>
-    <p>Keep your password to yourself. You are responsible for what happens under your account.
-    Accounts that cheat leaderboards, or use offensive names, may be removed without notice.</p>
+    <h2>1. The deal</h2>
+    <p>The game is free to play. Play it as much as you like. By playing you accept these terms
+    and the privacy policy.</p>
 
-    <h2>Progress is not a possession</h2>
+    <h2>2. Who can play</h2>
+    <p>Anyone may play. If you are under the age where you live at which you can agree to terms
+    on your own, ask a parent or guardian first. To buy anything you must be old enough to use a
+    payment card in your country.</p>
+
+    <h2>3. Your account</h2>
+    <p>Keep your password and recovery code to yourself; you are responsible for what happens
+    under your account. Pick a nickname that is not offensive and does not impersonate anyone.
+    We may suspend or remove accounts that cheat, abuse other players, use offensive names, or
+    attack the service.</p>
+
+    <h2>4. Fair play</h2>
+    <p>Do not modify the game to gain an advantage, submit scores you did not earn, use bots,
+    or try to break, overload or reverse-engineer the servers. Leaderboard entries that are not
+    genuine will be removed.</p>
+
+    <h2>5. Progress is not property</h2>
     <p>Progress, cash, gear and trophies exist inside a game. They have no real-world value,
-    cannot be exchanged for money, and may be reset if something goes badly wrong. Guest
-    progress is not saved at all — that is stated before you choose it.</p>
+    cannot be exchanged for money, and may be reset if something goes wrong. Guest progress is
+    not saved at all, which is stated plainly before you choose it.</p>
 
-    <h2>Paying to remove ads</h2>
-    <p>Removing ads is a one-off payment tied to your account. It removes advertising; it does
-    not change the game. If it does not work, write and it will be sorted or refunded.</p>
+    <h2>6. Paying to remove ads</h2>
+    <p>Removing ads is a single payment tied to your account. It removes advertising; it does
+    not change the game or grant any competitive advantage. If it does not work, write to us and
+    we will fix it or refund it. Because it is delivered immediately, refunds outside that are
+    at our discretion, and nothing here limits any refund right the law gives you.</p>
 
-    <h2>No promises</h2>
-    <p>The game is provided as it is. It may have bugs, it may go offline, and it may change.
-    It is a hunting game, not a service anyone depends on.</p>
+    <h2>7. Competitions and prizes</h2>
+    <p>Leaderboards reset weekly. If we ever run a competition with a prize, the rules,
+    eligibility and closing date will be published with it, and those rules will take precedence
+    over this section. Unless a competition says otherwise, no entry fee is required and nothing
+    here is a game of chance or an offer of gambling.</p>
 
-    <h2>Hunting</h2>
-    <p>This is fiction. The animals are drawings. Nothing here is advice about real hunting,
-    real firearms, or real wildlife, and real hunting is governed by real laws where you live.</p>
+    <h2>8. Who owns what</h2>
+    <p>The game, its code, art, text and name belong to ${OPERATOR}. You may play it and share
+    links to it. You may not copy it, sell it, host your own copy, or present it as your own.</p>
 
-    <h2>Getting in touch</h2>
-    <p>Write to <b>${CONTACT_EMAIL}</b>.</p>`}
+    <h2>9. No promises</h2>
+    <p>The game is provided as it is, without warranty of any kind. It may contain bugs, it may
+    go offline, and it may change or stop entirely. To the fullest extent the law allows, we are
+    not liable for indirect or consequential loss, and our total liability to you is limited to
+    whatever you have actually paid us, which for most people is nothing. Nothing here excludes
+    liability that cannot legally be excluded.</p>
+
+    <h2>10. Ending it</h2>
+    <p>You can stop at any time and delete your account from the Progress tab. We may suspend
+    access for breach of these terms.</p>
+
+    <h2>11. This is fiction</h2>
+    <p>The animals are drawings. Nothing here is guidance about real hunting, real firearms or
+    real wildlife, and real hunting is governed by real laws where you live.</p>
+
+    <h2>12. Law</h2>
+    <p>These terms are governed by the laws of the country where ${OPERATOR} operates. If any
+    part is unenforceable, the rest still stands.</p>
+
+    <h2>13. Changes</h2>
+    <p>We may update these terms; the date at the top will change. Continuing to play means you
+    accept the new version.</p>
+
+    <h2>14. Contact</h2>
+    <p><b>${CONTACT_EMAIL}</b></p>`}
 };
 function showLegal(which){
   const L=LEGAL[which]||LEGAL.privacy;
@@ -3483,8 +3576,9 @@ $('sellAll').addEventListener('click',()=>{ let got=0;
 $('acctLogin').addEventListener('click',acctLogin); $('acctRegister').addEventListener('click',acctRegister);
 $('acctLogout').addEventListener('click',acctLogout); $('acctSync').addEventListener('click',acctSync);
 document.querySelectorAll('button[data-lb]').forEach(b=>b.addEventListener('click',()=>{ lbBy=b.dataset.lb; document.querySelectorAll('button[data-lb]').forEach(x=>x.classList.toggle('on',x===b)); loadLeaderboard(); }));
-$('pServer').addEventListener('change',()=>{ save.server=$('pServer').value.trim(); persist(); acctResume(); loadLeaderboard(); loadChalBoard(); });
-acctResume();
+document.querySelectorAll('button[data-lbs]').forEach(b=>b.addEventListener('click',()=>{ lbSeason=+b.dataset.lbs; document.querySelectorAll('button[data-lbs]').forEach(x=>x.classList.toggle('on',x===b)); loadLeaderboard(); }));
+$('pServer').addEventListener('change',()=>{ save.server=$('pServer').value.trim(); persist(); acctResume(); checkServerCapabilities(); loadLeaderboard(); loadChalBoard(); });
+acctResume(); checkServerCapabilities();
 $('lodgeBtn').addEventListener('click',showLodge);
 $('retryBtn').addEventListener('click',()=>{ if(mode==='chal'&&CHAL)startChallenge(CHAL.id); else if(LV)startDay(); else if(mode==='arena')startArena(arenaOnline); else showLodge(); });
 $('deathBtn').addEventListener('click',showLodge);
