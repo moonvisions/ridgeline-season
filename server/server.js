@@ -865,15 +865,30 @@ function getRoom(name) {
 }
 function send(ws, o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 function broadcast(room, o, except) { const m = JSON.stringify(o); for (const p of room.players.values()) if (p.id !== except && p.ws && p.ws.readyState === 1) p.ws.send(m); }
+const WARMUP_SECONDS = 15;
+// A match should not begin the instant you arrive. Everyone gets a warm-up:
+// you are in the world, you can move and look around and watch the others
+// turn up, and a shared countdown starts the round for all of you at once.
+function startWarmup(room) {
+  room.phase = 'warm';
+  room.warmLeft = WARMUP_SECONDS;
+  room.running = false;
+  room.animals = [];
+  for (let i = 0; i < 18; i++) room.animals.push(spawnAnimal(room));
+  for (const p of room.players.values()) { p.score = 0; p.kills = 0; p.tags = 0; p.trophies = 0; p.longest = 0; }
+  broadcast(room, { t: 'warmup', seconds: WARMUP_SECONDS, players: room.players.size });
+  console.log(`[match] ${room.name} warm-up (${room.players.size} in the lobby)`);
+}
 function startMatch(room) {
+  room.phase = 'live';
   room.running = true; room.time = 0; room.timeLeft = MATCH_SECONDS; room.animals = [];
   for (const p of room.players.values()) { p.score = 0; p.kills = 0; p.tags = 0; p.trophies = 0; p.longest = 0; }
   for (let i = 0; i < 18; i++) room.animals.push(spawnAnimal(room));
-  broadcast(room, { t: 'start', seconds: MATCH_SECONDS });
+  broadcast(room, { t: 'start', seconds: MATCH_SECONDS, players: room.players.size });
   console.log(`[match] ${room.name} started with ${room.players.size}`);
 }
 function endMatch(room) {
-  room.running = false;
+  room.running = false; room.phase = 'over';
   const board = [...room.players.values()]
     .map(p => ({ id: p.id, name: p.name, score: p.score, kills: p.kills, tags: p.tags | 0, total: p.kills + (p.tags | 0), bot: !!p.bot }))
     .sort((a, b) => b.total - a.total || b.score - a.score);
@@ -889,7 +904,7 @@ function endMatch(room) {
   persist();
   broadcast(room, { t: 'end', board });
   console.log(`[match] ${room.name} ended: ${board.map(b => b.name + ' ' + b.score).join(', ')}`);
-  setTimeout(() => { if (rooms.has(room.name) && room.players.size > 0 && !room.running) startMatch(room); }, 12000);
+  setTimeout(() => { if (rooms.has(room.name) && realCount(room) > 0 && !room.running) startWarmup(room); }, 12000);
 }
 
 const wss = new WebSocketServer({ server, maxPayload: 4096 });
@@ -913,7 +928,8 @@ wss.on('connection', (ws, req) => {
       send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
                  players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
       broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
-      if (!room.running) startMatch(room);
+      if (room.phase === 'warm') send(ws, { t: 'warmup', seconds: Math.ceil(room.warmLeft), players: room.players.size });
+      else if (!room.running) startWarmup(room);
       else send(ws, { t: 'start', seconds: room.timeLeft });
       console.log(`[join] ${p.name}${user ? '' : ' (guest)'} -> ${room.name}`);
       return;
@@ -933,6 +949,7 @@ wss.on('connection', (ws, req) => {
       p.yaw = +m.yaw || 0; p.firing = m.firing ? 1 : 0;
       return;
     }
+    if (m.t === 'shot' && room.phase === 'warm') { send(ws, { t: 'shotResult', ok: false, why: 'Warm-up — the match has not started' }); return; }
     if (m.t === 'shot') {
       if (!room.running) return;
       const r = resolveShot(room, p, m);
@@ -970,6 +987,12 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (room.players.size === 0) continue;
     balanceBots(room);
+    if (room.phase === 'warm') {
+      room.warmLeft -= dt;
+      for (const a of room.animals) updateAnimal(room, a, dt);
+      for (const p of room.players.values()) if (p.bot) stepBot(room, p, dt);
+      if (room.warmLeft <= 0) startMatch(room);
+    }
     if (room.running) {
       room.time += dt; room.timeLeft -= dt;
       for (const a of room.animals) updateAnimal(room, a, dt);
@@ -978,7 +1001,8 @@ setInterval(() => {
     }
     broadcast(room, {
       t: 'states',
-      seconds: Math.max(0, room.timeLeft),
+      seconds: Math.max(0, room.phase === 'warm' ? room.warmLeft : room.timeLeft),
+      phase: room.phase || 'live',
       players: [...room.players.values()].map(q => ({ id: q.id, x: +q.x.toFixed(2), z: +q.z.toFixed(2), yaw: +q.yaw.toFixed(2), score: q.score, kills: q.kills, tags: q.tags | 0, firing: q.firing, bot: !!q.bot })),
       animals: room.animals.map(a => ({ id: a.id, sp: a.sp, tg: a.tagged ? 1 : 0, x: +a.x.toFixed(2), z: +a.z.toFixed(2), h: +a.heading.toFixed(2), v: +a.speed.toFixed(1), st: a.state === 'dead' ? 'd' : a.state === 'flee' ? 'f' : a.state === 'walk' ? 'w' : 'g', hp: +(a.hp / a.maxhp).toFixed(2), tr: a.trophy ? 1 : 0, m: a.male ? 1 : 0, wd: a.wounded ? 1 : 0 })),
     });
