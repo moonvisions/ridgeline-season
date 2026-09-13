@@ -122,6 +122,22 @@
   .arenaSub{font-size:15px;line-height:1.5;color:#d5ddd4;max-width:430px;margin-top:14px}
   .arenaGo{margin-top:20px;width:100%;padding:20px;font-size:19px;letter-spacing:2.4px;
     box-shadow:0 6px 0 #8f2c00,0 16px 40px rgba(255,84,0,.38)}
+  .arenaHero.locked .arenaGo{background:rgba(255,255,255,.07);color:var(--faint);box-shadow:none;cursor:default}
+  .arenaHero.locked .arenaLiveRow{color:var(--faint)}
+  .arenaHero.locked .arenaLiveRow .dot{background:var(--faint);animation:none}
+  .heroLock{margin-top:14px;font-family:var(--disp);font-size:14px;letter-spacing:1.2px;
+    text-transform:uppercase;color:var(--gold);text-align:center}
+  .heroLock:empty,.heroLockSub:empty{display:none}
+  .heroLockSub{margin-top:6px;font-size:12.5px;color:var(--dim);text-align:center;line-height:1.5}
+  .modeCard{display:flex;align-items:center;gap:16px;margin-top:14px;padding:16px 18px;
+    background:linear-gradient(170deg,rgba(30,40,32,.72),rgba(12,18,13,.85));
+    border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:11px}
+  .modeText{flex:1;min-width:0}
+  .modeText b{display:block;font-family:var(--disp);font-size:17px;color:#fff;letter-spacing:.4px}
+  .modeText p{margin-top:5px;font-size:13px;line-height:1.5;color:#bcc7bc}
+  .modeCard button{width:auto;margin:0;flex:0 0 auto;padding:13px 20px;font-size:12.5px}
+  @media (max-width:560px){ .modeCard{flex-direction:column;align-items:stretch;text-align:left}
+    .modeCard button{width:100%} }
   .arenaStatus{font-size:12.5px;color:var(--dim);margin-top:10px;min-height:16px;text-align:center}
   .arenaHow{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
   .arenaHow div{flex:1;min-width:110px;background:rgba(255,255,255,.05);border:1px solid var(--line);
@@ -640,34 +656,13 @@
     </div>
 
     <div class="pane" id="paneChal">
-      <h2>The open arena</h2>
-      <div class="pitch" id="arenaPitch">
-        <p class="pitchLead">Three minutes. One valley. Everyone hunting the same animals at the same time.</p>
-        <ul class="pitchList">
-          <li><b>You see them move.</b> Real hunters working the same ground — and the animals they spook are spooked for you too.</li>
-          <li><b>Shooting is half of it.</b> Most animals <i>brought in</i> wins, and a carcass only counts once you walk out and tag it. Drop three and tag none, you lose to someone who took two and finished the job.</li>
-          <li><b>It counts.</b> Every match feeds the weekly table. Monday it resets and everyone starts level.</li>
-          <li><b>Never empty.</b> Short on players, the lodge sends its own hunters out to fill the match.</li>
-        </ul>
-        <p class="pitchLive"><b id="liveCount">Checking who's out there…</b></p>
-      </div>
-      <h2>Solo challenges</h2>
-      <p style="font-size:12px;color:var(--muted)">Short score attacks with their own leaderboards. No tags, no objectives, no bears — one number to beat. Sign in further down this tab to post scores.</p>
-      <div class="shop" id="chalList"></div>
-      <h2>Leaderboard</h2>
-      <div class="tabs" style="margin-top:4px"><button data-cb="chalLong" class="on">Long Shot</button><button data-cb="chalKills">Full Bag</button><button data-cb="chalTags">Field Dressing</button></div>
-      <div id="cbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Loading…</div>
-      
-      <h2>Wave survival — hold your ground</h2>
-      <p style="font-size:13px" id="survNote"></p>
-      <button id="survBtn" class="ghost">Wave mode</button>
-      <h2>Open arena — hunt against other people</h2>
-      <p style="font-size:13px" id="arenaNote"></p>
       <div class="arenaHero">
         <div class="arenaLiveRow"><span class="dot"></span><span id="liveCount">Looking for hunters…</span></div>
         <h3 class="arenaTitle">OPEN<em>ARENA</em></h3>
         <p class="arenaSub">Three minutes. Everything is fair game. Whoever brings in the most animals wins.</p>
         <button id="arenaOnlineBtn" class="arenaGo">Join a match</button>
+        <p class="heroLock" id="heroLock"></p>
+        <p class="heroLockSub" id="heroLockSub"></p>
         <p id="netStatus" class="arenaStatus"></p>
         <div class="arenaHow">
           <div><b>01</b><span>Shoot what you can</span></div>
@@ -683,20 +678,21 @@
           <input id="pServer" type="hidden">
         </div>
       </div>
-      <h2>Account</h2>
-      <div class="net" id="acctBox">
-        <div id="acctOut" class="hidden">
-          <p style="font-size:14px">Signed in as <b id="acctName"></b> <span id="acctSummary" style="color:var(--muted);font-size:12px"></span></p>
-          <div class="netrow"><button id="acctSync" class="ghost" style="margin-top:8px">Back up progress to cloud</button><button id="acctLogout" class="link">Sign out</button></div>
+      <h2>Wave survival</h2>
+      <div class="modeCard">
+        <div class="modeText">
+          <b>Endless waves</b>
+          <p id="survNote"></p>
         </div>
-        <div id="acctIn">
-          <p style="font-size:12px;color:var(--muted)">An account saves your progress and puts you on the leaderboards. It follows you to any device you play on.</p>
-          <div class="netrow"><label>Username <input id="acctUser" maxlength="14" autocomplete="username"></label><label>Password <input id="acctPass" type="password" minlength="8" autocomplete="current-password"></label></div>
-          <div class="netrow"><button id="acctLogin" class="ghost">Sign in</button><button id="acctRegister" class="ghost">Create account</button></div>
-        </div>
-        <p id="acctStatus" style="font-size:12px;color:var(--muted);min-height:16px"></p>
+        <button id="survBtn" class="ghost">Wave mode</button>
       </div>
-      <h2>Leaderboards</h2>
+      <h2>Solo challenges</h2>
+      <p style="font-size:12px;color:var(--muted)">Short score attacks with their own leaderboards. No tags, no objectives, no bears — one number to beat. Sign in further down this tab to post scores.</p>
+      <div class="shop" id="chalList"></div>
+      <h2>Challenge records</h2>
+      <div class="tabs" style="margin-top:4px"><button data-cb="chalLong" class="on">Long Shot</button><button data-cb="chalKills">Full Bag</button><button data-cb="chalTags">Field Dressing</button></div>
+      <div id="cbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Loading…</div>
+      <h2>This week's hunters</h2>
       <div class="tabs" style="margin-top:4px"><button data-lbs="1" class="on">This week</button><button data-lbs="0">All time</button></div>
       <div class="tabs" style="margin-top:6px"><button data-lb="bestArena" class="on">Arena score</button><button data-lb="arenaWins">Arena wins</button><button data-lb="harvests">Harvests</button><button data-lb="campaignStars">Stars</button></div>
       <p id="lbSeason" style="font-size:12px;color:var(--gold);margin-top:8px"></p>
@@ -714,6 +710,19 @@
       <div class="shop" id="skills"></div>
       <h2>Badges</h2>
       <div class="shop" id="badges"></div>
+      <h2>Account</h2>
+      <div class="net" id="acctBox">
+        <div id="acctOut" class="hidden">
+          <p style="font-size:14px">Signed in as <b id="acctName"></b> <span id="acctSummary" style="color:var(--muted);font-size:12px"></span></p>
+          <div class="netrow"><button id="acctSync" class="ghost" style="margin-top:8px">Back up progress to cloud</button><button id="acctLogout" class="link">Sign out</button></div>
+        </div>
+        <div id="acctIn">
+          <p style="font-size:12px;color:var(--muted)">An account saves your progress and puts you on the leaderboards. It follows you to any device you play on.</p>
+          <div class="netrow"><label>Username <input id="acctUser" maxlength="14" autocomplete="username"></label><label>Password <input id="acctPass" type="password" minlength="8" autocomplete="current-password"></label></div>
+          <div class="netrow"><button id="acctLogin" class="ghost">Sign in</button><button id="acctRegister" class="ghost">Create account</button></div>
+        </div>
+        <p id="acctStatus" style="font-size:12px;color:var(--muted);min-height:16px"></p>
+      </div>
       <h2>Your data</h2>
       <p style="font-size:13px">Everything the game knows about you, and how to get rid of it.</p>
       <div class="net">
@@ -1116,7 +1125,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v7';   // bump this whenever you change the policy
+const BUILD = 'arena-v9';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -3151,10 +3160,10 @@ function renderLodge(){
     Finish <b>Hunt ${ARENA_HUNT} — ${arenaLv?arenaLv.name:'Silent Draw'}</b> to open the arena. That is the one where
     a bear comes for you, and you will want to know what you are doing before you meet other hunters out there.
     <div class="xpbar" style="max-width:280px"><div style="width:${Math.round(doneHunts/ARENA_HUNT*100)}%"></div></div>`;
-  const pitch=$('arenaPitch'); if(pitch)pitch.classList.toggle('lockedPitch',!au);
-  $('arenaNote').innerHTML=au
-    ? 'Pick any room name and share it — anyone typing the same name lands in your match.'
-    : lockMsg;
+  const hero=$('arenaHero');
+  if(hero)hero.classList.toggle('locked',!au);
+  setTxt('heroLock', au?'':'Finish Hunt '+ARENA_HUNT+' — '+(arenaLv?arenaLv.name:'Silent Draw')+' to open the arena');
+  setTxt('heroLockSub', au?'':doneHunts+' of '+ARENA_HUNT+' hunts done. That is the one where a bear comes for you — worth knowing your way around before you meet other hunters.');
   $('arenaBtn').disabled=!au; $('arenaBtn').style.opacity=au?1:.5;
   $('arenaOnlineBtn').disabled=!au; $('arenaOnlineBtn').style.opacity=au?1:.5;
   if($('pName'))$('pName').value=save.name||''; if($('pServer'))$('pServer').value=save.server||''; if($('pRoom'))$('pRoom').value=save.room||'';
