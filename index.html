@@ -17,6 +17,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Ridgeline">
+<link rel="manifest" href="manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%230b100d'/><circle cx='32' cy='23' r='8' fill='%23ff6a1f'/><path d='M4 46 L20 28 L30 39 L41 24 L60 46 Z' fill='%23eef1ec'/></svg>">
 <style>
   :root{
@@ -71,6 +72,9 @@
     background:rgba(14,20,16,.6);border:1px solid rgba(255,255,255,.22);border-radius:4px;box-shadow:none;
     backdrop-filter:blur(4px);transition:background .14s,border-color .14s,color .14s}
   .tLink:hover{background:rgba(255,106,31,.16);border-color:var(--blaze);color:#fff}
+  .tLive{margin-top:16px;font-family:var(--type);font-size:11.5px;letter-spacing:2px;text-transform:uppercase;
+    color:#7cff5a;text-shadow:0 0 14px rgba(124,255,90,.45)}
+  .tLive::before{content:"● ";color:#7cff5a}
   .tFoot{display:flex;align-items:center;gap:12px;margin-top:26px;font-family:var(--type);font-size:11px;
     letter-spacing:2px;text-transform:uppercase;color:var(--faint)}
   .tFoot i{width:4px;height:4px;background:var(--faint);border-radius:50%;display:inline-block}
@@ -121,7 +125,7 @@
   .eBox{margin-top:22px;background:rgba(14,20,16,.62);border:1px solid rgba(255,255,255,.16);
     border-radius:10px;padding:16px 16px 18px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
   .eTabs{display:flex;gap:6px;margin-bottom:6px}
-  .eTabs button{flex:1;margin:0;padding:11px;font-family:var(--disp);font-size:12.5px;letter-spacing:1.4px;
+  .eTabs button{flex:1;width:auto;margin:0;padding:11px;font-family:var(--disp);font-size:12.5px;letter-spacing:1.4px;
     text-transform:uppercase;background:rgba(255,255,255,.05);color:var(--dim);border:1px solid var(--line);
     border-radius:6px;box-shadow:none;cursor:pointer;transition:background .14s,color .14s}
   .eTabs button.on{background:rgba(255,106,31,.18);color:#fff;border-color:var(--blaze)}
@@ -216,6 +220,19 @@
   h2::before{content:"";position:absolute;left:0;top:2px;width:4px;height:16px;background:var(--blaze);
     border-radius:2px;box-shadow:0 0 14px rgba(255,106,31,.6)}
   p{margin:10px 0 0;line-height:1.6;font-size:14.5px;color:#bcc7bc}
+  .pitch{background:linear-gradient(180deg,rgba(255,106,31,.10),rgba(22,30,24,.55));
+    border:1px solid rgba(255,106,31,.35);border-left:4px solid var(--blaze);border-radius:9px;
+    padding:18px 20px;margin-top:14px;backdrop-filter:blur(6px)}
+  .pitchLead{font-family:var(--disp);font-size:19px;line-height:1.3;color:#fff;margin:0 0 12px;letter-spacing:.3px}
+  .pitchList{list-style:none;margin:0;padding:0}
+  .pitchList li{font-size:13.5px;line-height:1.55;color:#c6d1c6;padding:7px 0 7px 18px;position:relative;
+    border-top:1px solid rgba(255,255,255,.07)}
+  .pitchList li:first-child{border-top:0}
+  .pitchList li::before{content:"\203A";position:absolute;left:2px;color:var(--blaze);font-weight:bold}
+  .pitchList b{color:#fff}
+  .pitchLive{margin:14px 0 0;font-family:var(--type);font-size:11.5px;letter-spacing:1.6px;
+    text-transform:uppercase;color:#7cff5a}
+  .lockedPitch{opacity:.72}
   .pane > p:first-child{font-size:16px;line-height:1.55;color:#d5ddd4;max-width:560px;margin-top:18px;
     padding-left:14px;border-left:2px solid rgba(255,106,31,.45)}
 
@@ -228,7 +245,7 @@
   .tabs{display:flex;gap:2px;margin-top:26px;overflow-x:auto;scrollbar-width:none;
     border-bottom:1px solid var(--line)}
   .tabs::-webkit-scrollbar{display:none}
-  .tabs button{margin:0;flex:0 0 auto;padding:15px 20px 13px;font-family:var(--disp);font-size:13.5px;
+  .tabs button{margin:0;flex:0 0 auto;width:auto;padding:15px 20px 13px;font-family:var(--disp);font-size:13.5px;
     font-weight:bold;letter-spacing:1.8px;text-transform:uppercase;cursor:pointer;
     background:none;color:var(--faint);border:0;border-bottom:3px solid transparent;margin-bottom:-1px;
     border-radius:0;box-shadow:none;transition:color .14s,border-color .14s,background .14s}
@@ -427,7 +444,7 @@
     h1::after{width:74px;height:3px;margin-top:13px}
     h2{font-size:14px;margin:26px 0 10px}
     .pane > p:first-child{font-size:15px;margin-top:16px}
-    .tabs button{flex:0 0 auto;padding:14px 14px 12px;font-size:12px;letter-spacing:1.3px}
+    .tabs button{flex:0 0 auto;width:auto;padding:14px 14px 12px;font-size:12px;letter-spacing:1.3px}
     .shop{grid-template-columns:1fr}
     .lvls{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
     .item small{min-height:0}
@@ -531,6 +548,7 @@
       <button id="tHelp" class="tLink">Controls</button>
     </div>
     <div class="adslot adTitle" id="adTitle"></div>
+    <p class="tLive" id="titleLive" style="display:none"></p>
     <p class="eNote" id="tGuest" style="display:none;color:#ffb36b;margin-top:14px"></p>
     <div class="tFoot"><span id="tRank">Greenhorn</span><i></i><span id="tCash">$0</span><i></i><span id="tStars">0 / 42 stars</span></div>
   </div>
@@ -548,7 +566,7 @@
     <div class="tabs">
       <button id="tabHunts" class="on">Hunt</button>
       <button id="tabShop">Gear</button>
-      <button id="tabChal">Play</button>
+      <button id="tabChal">Arena</button>
       <button id="tabCareer">Progress</button>
       <button id="tabGuide">Guide</button>
       <button id="tabHelp">Help</button>
@@ -583,7 +601,18 @@
     </div>
 
     <div class="pane" id="paneChal">
-      <h2>Challenges — beat a score</h2>
+      <h2>The open arena</h2>
+      <div class="pitch" id="arenaPitch">
+        <p class="pitchLead">Three minutes. One valley. Everyone hunting the same animals at the same time.</p>
+        <ul class="pitchList">
+          <li><b>You see them move.</b> Real hunters working the same ground — and the animals they spook are spooked for you too.</li>
+          <li><b>Shooting is half of it.</b> Most animals <i>brought in</i> wins, and a carcass only counts once you walk out and tag it. Drop three and tag none, you lose to someone who took two and finished the job.</li>
+          <li><b>It counts.</b> Every match feeds the weekly table. Monday it resets and everyone starts level.</li>
+          <li><b>Never empty.</b> Short on players, the lodge sends its own hunters out to fill the match.</li>
+        </ul>
+        <p class="pitchLive"><b id="liveCount">Checking who's out there…</b></p>
+      </div>
+      <h2>Solo challenges</h2>
       <p style="font-size:12px;color:var(--muted)">Short score attacks with their own leaderboards. No tags, no objectives, no bears — one number to beat. Sign in further down this tab to post scores.</p>
       <div class="shop" id="chalList"></div>
       <h2>Leaderboard</h2>
@@ -692,6 +721,12 @@
         <button id="optHud" class="ghost">HUD text: Normal</button>
         <p style="font-size:12px;color:var(--muted)">Controls side flips the joystick and buttons for left-handed play. Button size and HUD text help on small or very large screens. Tap each to cycle.</p>
       </div>
+      <h2>Put it on your home screen</h2>
+      <div class="net">
+        <p style="font-size:13px;margin:0 0 4px" id="installNote">Adds Ridgeline to your phone or desktop like an app — full screen, its own icon, no browser bars.</p>
+        <button id="installBtn" class="ghost" style="display:none">Install Ridgeline</button>
+        <p id="installHow" style="font-size:12px;color:var(--muted);margin-top:8px"></p>
+      </div>
       <h2>Sound</h2>
       <div class="net">
         <label>Master volume — <span id="volLabel">85%</span>
@@ -783,7 +818,8 @@ function applyControlMode(){
   const ui=$('touchUI'); if(ui)ui.classList.toggle('on',TOUCH_UI);
   if($('ctlMouse'))$('ctlMouse').classList.toggle('hidden',TOUCH_UI);
   if($('ctlTouch'))$('ctlTouch').classList.toggle('hidden',!TOUCH_UI&&!IS_TOUCH);
-  applyLayoutPrefs(); refreshAds();
+  applyLayoutPrefs(); refreshAds(); pollPresence();
+  if(!installEvent&&$('installHow')&&!$('installHow').textContent)setTxt('installHow',installHelpText());
   const vs=$('volSlider'); if(vs){ vs.value=Math.round((save.vol==null?.85:save.vol)*100); setTxt('volLabel',vs.value+'%'); }
   const rb=$('runMode'); if(rb)rb.textContent='Auto-run: '+(save&&save.autoRun?'ON (Shift walks)':'off');
   const b=$('ctrlMode'); if(b)b.textContent='Controls: '+(pref==='auto'?('Auto ('+(TOUCH_UI?'touch':'keyboard')+')'):pref==='touch'?'Touch':'Keyboard & mouse');
@@ -1019,7 +1055,7 @@ try{ const s=localStorage.getItem('ridgeline2'); if(s){ hadLocalSave=true; const
 //    Leave it empty and the game still works — it just runs without accounts,
 //    keeping progress on each player's own device.
 //      e.g. const DEFAULT_SERVER = 'wss://api.yourdomain.com';
-const DEFAULT_SERVER = 'wss://www.ridgelineseason.com/api';
+const DEFAULT_SERVER = '';
 
 // 2. The address people use to reach you about their data. It appears in the
 //    privacy policy and the terms. A policy with no contact route is not one.
@@ -1614,6 +1650,21 @@ async function deleteMyAccount(){
 }
 async function acctLogout(){ try{ await api('/api/logout',{}); }catch(e){} save.token=''; account=null; persist(); acctUI(); setTxt('acctStatus','Signed out.'); }
 async function acctSync(){ try{ const {token,...rest}=save; await api('/api/cloud',{save:rest}); setTxt('acctStatus','Progress backed up.'); }catch(e){ setTxt('acctStatus',e.message); } }
+let liveTimer=null;
+async function pollPresence(){
+  const base=httpBase();
+  const el=$('liveCount'), t=$('titleLive');
+  if(!base){ if(el)setTxt('liveCount','Set a server address below to play online.'); if(t)t.style.display='none'; return; }
+  try{
+    const j=await fetch(base+'/api/status').then(r=>r.json());
+    const n=j.players|0, a=j.accounts|0;
+    if(el)setTxt('liveCount', n>0
+      ? (n===1?'1 hunter is out there right now':n+' hunters are out there right now')
+      : (a>0? a+' hunters registered — none online this minute':'Be the first one out there'));
+    if(t){ t.style.display=n>0?'':'none'; setTxt('titleLive', n+(n===1?' hunter online':' hunters online')); }
+  }catch(e){ if(el)setTxt('liveCount','Could not reach the server.'); if(t)t.style.display='none'; }
+}
+function startPresence(){ if(liveTimer)clearInterval(liveTimer); pollPresence(); liveTimer=setInterval(pollPresence,20000); }
 async function checkServerCapabilities(){
   const base=httpBase(); if(!base)return;
   try{ const r=await fetch(base+'/api/status'); const j=await r.json(); PAY_OK=!!j.payments; }
@@ -1716,6 +1767,30 @@ function bearAggro(){
 }
 // How lively the game is. Later hunts have animals that walk more, graze less
 // and cover ground faster, so a herd never stands around waiting to be shot.
+function targetDensity(){
+  if(mode==='chal')return 14;
+  if(mode==='surv')return 10;
+  const id=(LV&&LV.id)||1;
+  return id<=3?12:id<=6?11:id<=10?10:9;      // early hunts are generous
+}
+let stockT=0;
+function keepStocked(dt){
+  if(!running||mode==='arena'||arenaAuth)return;
+  stockT-=dt; if(stockT>0)return;
+  stockT=.8;
+  let near=0;
+  for(const a of animals){
+    if(a.state==='dead'||a.state==='gone')continue;
+    if(Math.hypot(a.x-P.x,a.z-P.z)<170)near++;
+  }
+  const want=targetDensity();
+  if(near<want){
+    // bring them in from beyond the treeline, not on top of the player
+    for(let i=0;i<Math.min(3,want-near);i++)animals.push(makeTrophy(spawnAnimal(true)));
+  }
+  // tidy up anything that has wandered right off the map
+  if(animals.length>46)animals=animals.filter(a=>a.state!=='gone').slice(-40);
+}
 function animalPace(){
   const hard=(LV&&LV.hard)||0;
   if(mode==='surv')return 1.45;
@@ -1738,7 +1813,7 @@ function scopeZoom(){ return [4,6,8][upg('scope')]; }
 function resetDay(worldSeed){
   buildWorld(); P={x:0,z:0,yaw:rnd(0,TAU),pitch:0,stamina:100,speed:0,bob:0,eye:1.6};
   herds=[]; herdId=1;
-  animals=[]; for(let i=0;i<11;i++)animals.push(makeTrophy(spawnAnimal(true))); arrows=[]; blood=[]; stuck=[]; dirt=[]; tracks=[];
+  animals=[]; for(let i=0;i<18;i++)animals.push(makeTrophy(spawnAnimal(true))); arrows=[]; blood=[]; stuck=[]; dirt=[]; tracks=[];
   weapon='rifle'; zoom=1; scoped=false; breath=breathMax(); breathHold=false; ammo=magSize(); arrowsLeft=Math.min(quiverSize(),quiverSize()+ (save.arrowStock|0)); save.arrowStock=Math.max(0,(save.arrowStock|0)-(arrowsLeft-quiverSize())); reloading=0; recoil=0; flash=0;
   buildWorld(worldSeed); DAY=LV?LV.t:120; score=0; cashDay=0; timeLeft=DAY; time=0; wind={dir:rnd(0,TAU),str:rnd(.6,1.4)};
   TSEED=Math.random()*100;
@@ -2178,7 +2253,7 @@ function killAnimal(a,zone,d,p){
   pushFeed('You took a '+sp.name.toLowerCase(),'+'+pts,'#ff6a13');
   callout={text:(a.trophy?'TROPHY! ':'')+(zone==='vital'?'Clean kill':zone==='head'?'Head shot':zone==='recovered'?'Recovered':'Dropped')+' — '+sp.name, sub:Math.round(d)+' m  ·  +'+pts+'  ·  +$'+cash+'  ·  walk to it to tag', c:'#ff6a13', t:3.5};
   if(p)floaters.push({x:p.sx,y:p.gy-p.s*sp.k,text:'+'+pts,t:1.6});
-  if(mode==='hunt'||mode==='chal')setTimeout(()=>{ if(running)animals.push(makeTrophy(spawnAnimal(mode==='chal'))); },mode==='chal'?2200:5000);
+  if(mode==='hunt'||mode==='chal')setTimeout(()=>{ if(running)animals.push(makeTrophy(spawnAnimal(true))); },mode==='chal'?2000:2600);
 }
 function applyHit(a,zone,d,p){
   alarmHerd(a,120);
@@ -2804,7 +2879,7 @@ function frame(now){
         callout={text:'A bear has your scent',sub:'It will charge. Vitals shot, or three solid body hits — and keep your distance',c:'#ff3b1f',t:5.5}; }
       startCharge(b); }
     chargingBear=animals.filter(a=>a.state==='charge'||a.state==='stalk'||a.state==='retreat').sort((u,v)=>distP(u)-distP(v))[0]||null;
-    if(arenaAuth){ tickRemoteAnimals(dt); } else { for(const a of animals)updateAnimal(a,dt); updateArrows(dt); }
+    if(arenaAuth){ tickRemoteAnimals(dt); } else { for(const a of animals)updateAnimal(a,dt); updateArrows(dt); keepStocked(dt); }
     if(mode==='arena')updateRivals(dt);
     if(!arenaAuth)animals=animals.filter(a=>{ if(a.state==='gone'){ if(mode==='hunt')setTimeout(()=>{if(running)animals.push(makeTrophy(spawnAnimal(false)));},3000); return false; } return true; });
     if(animals.length>18)animals=animals.filter(a=>a.state!=='dead'||a.deadT<20);
@@ -3014,7 +3089,17 @@ function renderLodge(){
       <div style="font-size:11px;color:var(--muted);margin-top:3px">${pr.lv>=50?'mastered':pr.into+' / '+pr.need+' xp'}</div></div>`; }).join(''));
   $('badges').innerHTML=BADGES.map(b=>`<div class="item" style="${save.badges[b.id]?'border-color:var(--blaze)':'opacity:.55'}"><b>${save.badges[b.id]?'★ ':'☆ '}${b.name}</b><small>${b.desc}</small></div>`).join('');
   const au=arenaUnlocked();
-  $('arenaNote').innerHTML=au?'An open, tag-free arena. You and three rival hunters work the same ground for three minutes — most points wins. Animals are contested: if a rival drops one first, it is theirs.':'<b>Locked.</b> Complete hunt 8 (Moose Country) to open the arena.';
+  // progress toward the arena, so the lock reads as a goal rather than a wall
+  const doneHunts=LEVELS.filter(l=>l.id<=ARENA_HUNT&&starsFor(l.id)>0).length;
+  const arenaLv=LEVELS.find(l=>l.id===ARENA_HUNT);
+  const lockMsg=`<b style="color:var(--gold)">Locked — ${doneHunts} of ${ARENA_HUNT} hunts done.</b><br>
+    Finish <b>Hunt ${ARENA_HUNT} — ${arenaLv?arenaLv.name:'Silent Draw'}</b> to open the arena. That is the one where
+    a bear comes for you, and you will want to know what you are doing before you meet other hunters out there.
+    <div class="xpbar" style="max-width:280px"><div style="width:${Math.round(doneHunts/ARENA_HUNT*100)}%"></div></div>`;
+  const pitch=$('arenaPitch'); if(pitch)pitch.classList.toggle('lockedPitch',!au);
+  $('arenaNote').innerHTML=au
+    ? 'Pick any room name and share it — anyone typing the same name lands in your match.'
+    : lockMsg;
   $('arenaBtn').disabled=!au; $('arenaBtn').style.opacity=au?1:.5;
   $('arenaOnlineBtn').disabled=!au; $('arenaOnlineBtn').style.opacity=au?1:.5;
   if($('pName'))$('pName').value=save.name||''; if($('pServer'))$('pServer').value=save.server||''; if($('pRoom'))$('pRoom').value=save.room||'';
@@ -3198,6 +3283,18 @@ function showLegal(which){
   $('legal').classList.remove('hidden');
 }
 function showEntry(){
+  // Already signed in from a previous visit? Go straight to the game. The token
+  // is verified in the background; if it has genuinely expired we come back here.
+  if(save.token&&accountsAvailable()){
+    $('entry').classList.add('hidden');
+    showTitle();
+    api('/api/me').then(j=>{ account=j.user; save.premium=!!(j.user&&j.user.premium); acctUI(); refreshAds(); })
+      .catch(()=>{ save.token=''; account=null; persist(); showEntryForced(); });
+    return;
+  }
+  showEntryForced();
+}
+function showEntryForced(){
   $('entry').classList.remove('hidden');
   $('title').classList.add('hidden'); $('lodge').classList.add('hidden');
   const have=accountsAvailable();
@@ -3383,7 +3480,8 @@ function startDay(){ sendEvent('hunt_start',{hunt:lvlSel}); if(document.activeEl
   $('lodge').classList.add('hidden'); $('endScreen').classList.add('hidden'); tryLock();
   if(COND){ warn={text:COND.name.toUpperCase(),t:3.2}; callout={text:COND.name,sub:COND.desc,c:'#e0b45a',t:5}; } }
 function startSurvival(){ if(!survUnlocked())return; if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=null; mode='surv'; audio(); resetDay(); animals=[]; fogDay=1; running=true; $('lodge').classList.add('hidden'); tryLock(); waveClear=true; waveT=3; warn={text:'Get ready',t:3}; }
-function arenaUnlocked(){ return starsFor(8)>0; }
+const ARENA_HUNT=4;
+function arenaUnlocked(){ return starsFor(ARENA_HUNT)>0; }
 async function startArena(online){
   if(!arenaUnlocked())return;
   const nameEl=$('pName'), srvEl=$('pServer'), roomEl=$('pRoom');
@@ -3557,6 +3655,27 @@ $('arenaBtn').addEventListener('click',()=>startArena(false));
 $('arenaOnlineBtn').addEventListener('click',()=>startArena(true));
 $('tutBtn').addEventListener('click',startTutorial);
 $('goPremium').addEventListener('click',startCheckout);
+// Chrome and Edge hand us an install prompt; Safari and Firefox do not, so we
+// tell those users how to do it by hand rather than showing a dead button.
+let installEvent=null;
+addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); installEvent=e;
+  const b=$('installBtn'); if(b){ b.style.display=''; setTxt('installHow',''); } });
+addEventListener('appinstalled',()=>{ const b=$('installBtn'); if(b)b.style.display='none';
+  setTxt('installHow','Installed. Look for Ridgeline with your other apps.'); });
+function installHelpText(){
+  const ua=navigator.userAgent;
+  if(/iPhone|iPad|iPod/.test(ua))return 'On iPhone or iPad: tap the Share button, then "Add to Home Screen".';
+  if(/Android/.test(ua))return 'On Android: open your browser menu and choose "Add to Home screen" or "Install app".';
+  if(/Firefox/.test(ua))return 'In Firefox: open the menu and choose "Install" or bookmark this page.';
+  if(/Safari/.test(ua))return 'In Safari: File menu, then "Add to Dock".';
+  return 'In Chrome or Edge: click the install icon at the right of the address bar.';
+}
+$('installBtn').addEventListener('click',async()=>{
+  if(!installEvent){ setTxt('installHow',installHelpText()); return; }
+  installEvent.prompt();
+  try{ await installEvent.userChoice; }catch(e){}
+  installEvent=null; $('installBtn').style.display='none';
+});
 $('optLefty').addEventListener('click',()=>{ save.lefty=!save.lefty; persist(); applyLayoutPrefs(); });
 $('optBtn').addEventListener('click',()=>{ const o=['small','normal','large']; save.btnSize=o[(o.indexOf(save.btnSize||'normal')+1)%3]; persist(); applyLayoutPrefs(); });
 $('optHud').addEventListener('click',()=>{ const o=['small','normal','large']; save.hudScale=o[(o.indexOf(save.hudScale||'normal')+1)%3]; persist(); applyLayoutPrefs(); });
@@ -3580,7 +3699,7 @@ $('acctLogout').addEventListener('click',acctLogout); $('acctSync').addEventList
 document.querySelectorAll('button[data-lb]').forEach(b=>b.addEventListener('click',()=>{ lbBy=b.dataset.lb; document.querySelectorAll('button[data-lb]').forEach(x=>x.classList.toggle('on',x===b)); loadLeaderboard(); }));
 document.querySelectorAll('button[data-lbs]').forEach(b=>b.addEventListener('click',()=>{ lbSeason=+b.dataset.lbs; document.querySelectorAll('button[data-lbs]').forEach(x=>x.classList.toggle('on',x===b)); loadLeaderboard(); }));
 $('pServer').addEventListener('change',()=>{ save.server=$('pServer').value.trim(); persist(); acctResume(); checkServerCapabilities(); loadLeaderboard(); loadChalBoard(); });
-acctResume(); checkServerCapabilities();
+acctResume(); checkServerCapabilities(); startPresence();
 $('lodgeBtn').addEventListener('click',showLodge);
 $('retryBtn').addEventListener('click',()=>{ if(mode==='chal'&&CHAL)startChallenge(CHAL.id); else if(LV)startDay(); else if(mode==='arena')startArena(arenaOnline); else showLodge(); });
 $('deathBtn').addEventListener('click',showLodge);
