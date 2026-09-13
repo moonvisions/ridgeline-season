@@ -2370,6 +2370,7 @@ function keyNames(e){
 function typingInField(){ const a=document.activeElement; return a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'); }
 let keyDebug=false;
 function onKeyDown(e){
+  if(e.__rlSeen)return; e.__rlSeen=1;   // listener is on window AND document
   if(typingInField())return;
   const names=keyNames(e); for(const n of names)keys[n]=true;
   const repeat=!!e.repeat;   // held-key auto-repeat: movement still applies, toggles must not
@@ -2390,6 +2391,7 @@ function onKeyDown(e){
   if(has('Enter'))fire();
 }
 function onKeyUp(e){
+  if(e.__rlSeenUp)return; e.__rlSeenUp=1;
   const names=keyNames(e); for(const n of names)keys[n]=false;
   if(names.includes('Space'))breathHold=false;
 }

@@ -41,6 +41,16 @@ const PORT = process.env.PORT || 8080;
 const ORIGIN = process.env.ORIGIN || '*';          // set to your site in production
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
+// ---- payments (all optional; set only what you use) ----
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const PAYPAL_ID = process.env.PAYPAL_CLIENT_ID || '';
+const PAYPAL_SECRET = process.env.PAYPAL_SECRET || '';
+const PAYPAL_API = process.env.PAYPAL_LIVE === '1' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+const SITE_URL = (process.env.SITE_URL || 'http://localhost:8080').replace(/\/+$/, '');
+const PRICE_CENTS = parseInt(process.env.PRICE_CENTS || '499', 10);
+const CURRENCY = (process.env.CURRENCY || 'usd').toLowerCase();
+const PENDING = new Map();   // paypal order id -> account name
 const TICK_MS = 66;                                // 15 Hz
 const MATCH_SECONDS = 180;
 const MAX_PER_ROOM = 8;
@@ -48,9 +58,13 @@ const MAP_R = 300;
 const COLORS = ['#e2542b', '#2b7fe2', '#8e2be2', '#e2c02b', '#2be29a', '#e22b7f', '#5ad6e2', '#e28b2b'];
 
 // ---------------------------------------------------------------- storage
-let DB = { users: {}, tokens: {} };
+let DB = { users: {}, tokens: {}, daily: {}, events: [], seasons: {}, totals: { plays: 0, signups: 0, guestSessions: 0 } };
 function load() {
-  try { DB = Object.assign(DB, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))); }
+  try {
+    DB = Object.assign(DB, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+    DB.daily = DB.daily || {}; DB.events = DB.events || []; DB.seasons = DB.seasons || {};
+    DB.totals = Object.assign({ plays: 0, signups: 0, guestSessions: 0 }, DB.totals || {});
+  }
   catch (e) { if (e.code !== 'ENOENT') console.error('load failed', e); }
 }
 let saveTimer = null;
@@ -76,10 +90,20 @@ function verifyPassword(pw, rec) {
   const { hash } = hashPassword(pw, rec.salt);
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(rec.hash, 'hex'));
 }
+function makeRecoveryCode() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 12; i++) out += (i && i % 4 === 0 ? '-' : '') + A[crypto.randomInt(A.length)];
+  return out;
+}
 function newUser(name, pw) {
   const { salt, hash } = hashPassword(pw);
+  const recovery = makeRecoveryCode();
+  const rec = hashPassword(recovery);
   return {
     name, salt, hash, created: Date.now(),
+    recSalt: rec.salt, recHash: rec.hash, recovery,   // recovery is stripped before storing
+    premium: false, premiumSince: 0,
     stats: { harvests: 0, bears: 0, trophies: 0, longest: 0, arenaMatches: 0, arenaWins: 0, bestArena: 0, arenaKills: 0, campaignStars: 0, rank: 0, chalLong: 0, chalKills: 0, chalTags: 0 },
     cloud: null,          // client's campaign save, backed up here
   };
@@ -96,8 +120,108 @@ function userFromToken(tok) {
   if (Date.now() - t.at > 30 * 86400e3) { delete DB.tokens[tok]; return null; }
   return DB.users[t.name.toLowerCase()] || null;
 }
-function publicStats(u) { return { name: u.name, ...u.stats }; }
+function grantPremium(name, how) {
+  if (!name) return;
+  const u = DB.users[String(name).toLowerCase()];
+  if (!u) { console.warn('[pay] paid but no such account:', name); return; }
+  u.premium = true; u.premiumSince = Date.now(); u.paidVia = how;
+  persist();
+  console.log(`[pay] ${u.name} is now ad-free (${how})`);
+}
+function publicStats(u) { return { name: u.name, premium: !!u.premium, ...u.stats }; }
 
+// ---------------------------------------------------------------- seasons
+// A season is one calendar week. Everyone's competitive numbers reset when it
+// turns over, and the old week's table is kept. This is what gives people a
+// reason to come back on Monday, and what any prize would be awarded from.
+function seasonKey(d) {
+  const t = d ? new Date(d) : new Date();
+  const x = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()));
+  const day = x.getUTCDay() || 7;
+  x.setUTCDate(x.getUTCDate() + 4 - day);                       // ISO: Thursday decides the year
+  const y0 = new Date(Date.UTC(x.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((x - y0) / 86400000) + 1) / 7);
+  return x.getUTCFullYear() + '-W' + String(week).padStart(2, '0');
+}
+function seasonEndsAt() {
+  const now = new Date();
+  const day = now.getUTCDay() || 7;
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + (8 - day)));
+  return end.getTime();
+}
+// Roll a player onto the current season, filing last week's result first.
+function ensureSeason(u) {
+  const key = seasonKey();
+  if (!u.season) { u.season = { key, bestArena: 0, harvests: 0, arenaWins: 0, stars: 0 }; return u.season; }
+  if (u.season.key !== key) {
+    const old = u.season;
+    if (old.bestArena || old.harvests || old.arenaWins) {
+      const bucket = DB.seasons[old.key] || (DB.seasons[old.key] = { key: old.key, closed: Date.now(), table: [] });
+      bucket.table.push({ name: u.name, bestArena: old.bestArena, harvests: old.harvests, arenaWins: old.arenaWins });
+      bucket.table.sort((a, b) => b.bestArena - a.bestArena);
+      bucket.table = bucket.table.slice(0, 100);
+    }
+    u.season = { key, bestArena: 0, harvests: 0, arenaWins: 0, stars: 0 };
+  }
+  return u.season;
+}
+function seasonBump(u, field, value, isBest) {
+  const sn = ensureSeason(u);
+  if (isBest) sn[field] = Math.max(sn[field] | 0, value | 0);
+  else sn[field] = (sn[field] | 0) + (value | 0);
+}
+// ---------------------------------------------------------------- analytics
+// Aggregate only: per-day counters plus a short rolling event log. No IPs, no
+// personal data. Guests are counted by a random per-tab id that is never stored.
+const EVENT_CAP = 4000;
+function today() { return new Date().toISOString().slice(0, 10); }
+function dayBucket(d) {
+  const k = d || today();
+  if (!DB.daily[k]) DB.daily[k] = { plays: 0, completions: 0, signups: 0, guestSessions: 0, players: {}, guests: {}, hunts: {}, modes: {} };
+  return DB.daily[k];
+}
+function trackEvent(type, who, data, isGuest, session) {
+  const b = dayBucket();
+  if (who) b.players[who] = 1; else if (session) b.guests[session] = 1;
+  if (type === 'hunt_start') {
+    b.plays++; DB.totals.plays++;
+    if (data && data.hunt != null) b.hunts[data.hunt] = (b.hunts[data.hunt] | 0) + 1;
+  }
+  if (type === 'hunt_end') b.completions++;
+  if (type === 'signup') { b.signups++; DB.totals.signups++; }
+  if (type === 'guest_start') { b.guestSessions++; DB.totals.guestSessions++; }
+  if (type === 'mode') b.modes[data && data.mode] = ((b.modes[data && data.mode]) | 0) + 1;
+  DB.events.push({ t: Date.now(), type, who: who || null, guest: !!isGuest, data: data || {} });
+  if (DB.events.length > EVENT_CAP) DB.events.splice(0, DB.events.length - EVENT_CAP);
+  persist();
+}
+function analytics() {
+  const days = Object.keys(DB.daily).sort().slice(-30);
+  const series = days.map(d => {
+    const b = DB.daily[d];
+    return { date: d, plays: b.plays, completions: b.completions, signups: b.signups,
+             accounts: Object.keys(b.players).length, guests: Object.keys(b.guests).length,
+             guestSessions: b.guestSessions };
+  });
+  const t = today(), y = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  const users = Object.values(DB.users);
+  const active = k => { const since = Date.now() - k * 864e5; return users.filter(u => (u.lastSeen || 0) > since).length; };
+  const huntTotals = {};
+  for (const d of days) for (const [h, n] of Object.entries(DB.daily[d].hunts)) huntTotals[h] = (huntTotals[h] | 0) + n;
+  return {
+    accounts: users.length, premiumAccounts: users.filter(u => u.premium).length,
+    activeToday: active(1), active7: active(7), active30: active(30),
+    totals: DB.totals,
+    todayRow: series.find(r => r.date === t) || { date: t, plays: 0, completions: 0, signups: 0, accounts: 0, guests: 0, guestSessions: 0 },
+    yesterdayRow: series.find(r => r.date === y) || null,
+    series,
+    popularHunts: Object.entries(huntTotals).sort((a, b) => b[1] - a[1]).slice(0, 8),
+    leaders: users.map(u => ({ name: u.name, harvests: u.stats.harvests, bestArena: u.stats.bestArena,
+      stars: u.stats.campaignStars, longest: u.stats.longest, created: u.created, lastSeen: u.lastSeen || 0 }))
+      .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).slice(0, 60),
+    recent: DB.events.slice(-80).reverse(),
+  };
+}
 // ---------------------------------------------------------------- rate limiting
 const buckets = new Map();
 function limited(key, max, windowMs) {
@@ -116,6 +240,9 @@ function json(res, code, obj) {
     'Access-Control-Allow-Origin': ORIGIN,
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
   });
   res.end(JSON.stringify(obj));
 }
@@ -127,13 +254,123 @@ function readBody(req) {
 }
 function ipOf(req) { return (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(); }
 
+
+// ---------------------------------------------------------------- admin page
+// Served at /admin. Asks for the admin key, keeps it in the tab only, and
+// renders whatever /api/admin/stats returns.
+const ADMIN_PAGE = `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ridgeline Season — admin</title>
+<style>
+:root{--blaze:#ff6a1f;--gold:#ffc24a;--ink:#eef1ec;--dim:#95a396;--faint:#6f7d71;
+ --panel:rgba(28,37,30,.9);--line:rgba(255,255,255,.10);
+ --disp:'Trebuchet MS','Segoe UI',sans-serif;--type:'Courier New',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0b100d;color:var(--ink);font-family:var(--disp);padding:26px 18px 60px}
+.wrap{max-width:1100px;margin:0 auto}
+h1{font-size:30px;text-transform:uppercase;letter-spacing:-.5px}
+h1 span{display:block;font-family:var(--type);font-size:10px;letter-spacing:3.4px;color:var(--blaze);margin-top:8px}
+h1::after{content:"";display:block;width:84px;height:4px;background:var(--blaze);border-radius:2px;margin-top:14px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:2px;margin:30px 0 12px;padding-left:12px;
+ border-left:3px solid var(--blaze)}
+.gate{max-width:380px;margin-top:24px}
+input{width:100%;padding:13px;font-size:16px;background:rgba(0,0,0,.45);color:var(--ink);
+ border:1px solid var(--line);border-radius:6px;margin-top:8px}
+button{margin-top:12px;padding:14px 20px;font-family:var(--disp);font-size:14px;font-weight:bold;
+ letter-spacing:1.4px;text-transform:uppercase;background:linear-gradient(180deg,#ff8a3d,var(--blaze));
+ color:#180a02;border:0;border-radius:6px;cursor:pointer}
+button.ghost{background:rgba(14,20,16,.6);color:#d8e0d7;border:1px solid rgba(255,255,255,.22)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--blaze);
+ border-radius:8px;padding:14px}
+.card b{display:block;font-size:28px;color:var(--gold)}
+.card small{font-family:var(--type);font-size:9.5px;color:var(--faint);text-transform:uppercase;letter-spacing:1.4px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+th{text-align:left;font-family:var(--type);font-size:9.5px;color:var(--faint);text-transform:uppercase;
+ letter-spacing:1.2px;padding:8px 6px;border-bottom:1px solid var(--line)}
+td{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06);color:#c3cec3}
+td:first-child{color:#fff}
+.bar{height:8px;background:rgba(0,0,0,.5);border-radius:4px;overflow:hidden;min-width:60px}
+.bar div{height:100%;background:linear-gradient(90deg,var(--blaze),var(--gold))}
+.err{color:#ff9a63;margin-top:10px;font-size:13px}
+.muted{color:var(--dim);font-size:13px;margin-top:8px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+</style></head><body><div class="wrap">
+<h1>Ridgeline Season<span>Admin &amp; analytics</span></h1>
+
+<div id="gate" class="gate">
+  <p class="muted">Enter the admin key you set as <code>ADMIN_KEY</code> on the server.</p>
+  <input id="key" type="password" placeholder="admin key" autocomplete="off">
+  <button id="go">Open dashboard</button>
+  <p id="err" class="err"></p>
+</div>
+
+<div id="dash" style="display:none">
+  <div class="row"><button id="refresh" class="ghost">Refresh</button><span class="muted" id="stamp"></span></div>
+  <h2>Right now</h2><div class="cards" id="now"></div>
+  <h2>Last 14 days</h2><div id="series"></div>
+  <h2>Most played hunts</h2><div id="hunts"></div>
+  <h2>Players</h2><div id="players"></div>
+  <h2>Recent activity</h2><div id="recent"></div>
+</div>
+</div>
+<script>
+var KEY='';
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function ago(t){ if(!t)return 'never'; var s=(Date.now()-t)/1000;
+  if(s<60)return Math.round(s)+'s ago'; if(s<3600)return Math.round(s/60)+'m ago';
+  if(s<86400)return Math.round(s/3600)+'h ago'; return Math.round(s/86400)+'d ago'; }
+function card(v,l){ return '<div class="card"><b>'+v+'</b><small>'+l+'</small></div>'; }
+function load(){
+  fetch('/api/admin/stats',{headers:{'x-admin-key':KEY}}).then(function(r){
+    if(!r.ok)throw new Error(r.status===403?'That key was not accepted.':'Server error '+r.status);
+    return r.json();
+  }).then(function(d){
+    document.getElementById('gate').style.display='none';
+    document.getElementById('dash').style.display='';
+    document.getElementById('stamp').textContent='updated '+new Date().toLocaleTimeString();
+    var t=d.todayRow;
+    document.getElementById('now').innerHTML=
+      card(d.accounts,'Accounts')+card(d.activeToday,'Active today')+card(d.active7,'Active this week')+
+      card(t.plays,'Hunts started today')+card(t.completions,'Hunts finished today')+
+      card(t.guests,'Guests today')+card(t.signups,'Sign-ups today')+card(d.totals.plays,'Hunts all time');
+    var max=1; d.series.forEach(function(r){ max=Math.max(max,r.plays,r.accounts+r.guests); });
+    var rows=d.series.slice(-14).reverse().map(function(r){
+      return '<tr><td>'+r.date+'</td><td>'+(r.accounts+r.guests)+'</td><td>'+r.accounts+'</td><td>'+r.guests+
+        '</td><td>'+r.plays+'</td><td>'+r.completions+'</td><td>'+r.signups+
+        '</td><td><div class="bar"><div style="width:'+Math.round(r.plays/max*100)+'%"></div></div></td></tr>';
+    }).join('');
+    document.getElementById('series').innerHTML='<table><tr><th>Day</th><th>Players</th><th>Accounts</th><th>Guests</th><th>Started</th><th>Finished</th><th>Sign-ups</th><th></th></tr>'+
+      (rows||'<tr><td colspan="8">No activity recorded yet.</td></tr>')+'</table>';
+    var hmax=1; d.popularHunts.forEach(function(h){ hmax=Math.max(hmax,h[1]); });
+    document.getElementById('hunts').innerHTML='<table><tr><th>Hunt</th><th>Starts</th><th></th></tr>'+
+      (d.popularHunts.map(function(h){ return '<tr><td>Hunt '+esc(h[0])+'</td><td>'+h[1]+
+        '</td><td><div class="bar"><div style="width:'+Math.round(h[1]/hmax*100)+'%"></div></div></td></tr>'; }).join('')
+       ||'<tr><td colspan="3">Nothing yet.</td></tr>')+'</table>';
+    document.getElementById('players').innerHTML='<table><tr><th>Name</th><th>Last seen</th><th>Harvests</th><th>Stars</th><th>Best arena</th><th>Longest</th><th>Joined</th></tr>'+
+      (d.leaders.map(function(u){ return '<tr><td>'+esc(u.name)+'</td><td>'+ago(u.lastSeen)+'</td><td>'+u.harvests+
+        '</td><td>'+u.stars+'/42</td><td>'+u.bestArena+'</td><td>'+u.longest+' m</td><td>'+
+        new Date(u.created).toLocaleDateString()+'</td></tr>'; }).join('')
+       ||'<tr><td colspan="7">No accounts yet.</td></tr>')+'</table>';
+    document.getElementById('recent').innerHTML='<table><tr><th>When</th><th>Who</th><th>Event</th><th>Detail</th></tr>'+
+      (d.recent.map(function(e){ return '<tr><td>'+ago(e.t)+'</td><td>'+(e.who?esc(e.who):'<span style="color:#6f7d71">guest</span>')+
+        '</td><td>'+esc(e.type)+'</td><td>'+esc(JSON.stringify(e.data))+'</td></tr>'; }).join('')
+       ||'<tr><td colspan="4">Nothing yet.</td></tr>')+'</table>';
+  }).catch(function(e){ document.getElementById('err').textContent=e.message; });
+}
+document.getElementById('go').onclick=function(){ KEY=document.getElementById('key').value.trim(); load(); };
+document.getElementById('key').onkeydown=function(e){ if(e.key==='Enter')document.getElementById('go').click(); };
+document.getElementById('refresh').onclick=load;
+setInterval(function(){ if(KEY&&document.getElementById('dash').style.display!=='none')load(); },30000);
+</script></body></html>`;
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const ip = ipOf(req);
   if (req.method === 'OPTIONS') return json(res, 204, {});
   try {
     if (url.pathname === '/' || url.pathname === '/api/status') {
-      return json(res, 200, { ok: true, players: [...rooms.values()].reduce((a, r) => a + r.players.size, 0), rooms: rooms.size, accounts: Object.keys(DB.users).length });
+      return json(res, 200, { ok: true, players: [...rooms.values()].reduce((a, r) => a + r.players.size, 0), rooms: rooms.size, accounts: Object.keys(DB.users).length, payments: !!(STRIPE_KEY && STRIPE_WEBHOOK_SECRET) || !!(PAYPAL_ID && PAYPAL_SECRET) });
     }
     if (url.pathname === '/api/register' && req.method === 'POST') {
       if (limited('reg:' + ip, 5, 3600e3)) return json(res, 429, { error: 'Too many sign-ups from this address. Try later.' });
@@ -142,22 +379,65 @@ const server = http.createServer(async (req, res) => {
       if (!NAME_RE.test(name)) return json(res, 400, { error: 'Name must be 3–14 letters, numbers or _' });
       if (pw.length < 8) return json(res, 400, { error: 'Password must be at least 8 characters' });
       if (DB.users[name.toLowerCase()]) return json(res, 409, { error: 'That name is taken' });
-      DB.users[name.toLowerCase()] = newUser(name, pw);
+      const u0 = newUser(name, pw);
+      const recoveryCode = u0.recovery; delete u0.recovery;   // shown once, never kept in plain text
+      DB.users[name.toLowerCase()] = u0;
       const token = issueToken(name);
+      DB.users[name.toLowerCase()].lastSeen = Date.now();
       console.log(`[account] registered ${name}`);
-      return json(res, 200, { token, user: publicStats(DB.users[name.toLowerCase()]) });
+      return json(res, 200, { token, user: publicStats(DB.users[name.toLowerCase()]), recoveryCode });
     }
     if (url.pathname === '/api/login' && req.method === 'POST') {
       if (limited('login:' + ip, 20, 900e3)) return json(res, 429, { error: 'Too many attempts. Wait 15 minutes.' });
       const b = await readBody(req);
       const u = DB.users[String(b.name || '').toLowerCase()];
       if (!u || !verifyPassword(String(b.password || ''), u)) return json(res, 401, { error: 'Wrong name or password' });
+      u.lastSeen = Date.now(); persist();
       return json(res, 200, { token: issueToken(u.name), user: publicStats(u), cloud: u.cloud });
+    }
+    if (url.pathname === '/api/recover' && req.method === 'POST') {
+      if (limited('rec:' + ip, 10, 3600e3)) return json(res, 429, { error: 'Too many attempts. Try later.' });
+      const b = await readBody(req);
+      const u = DB.users[String(b.name || '').toLowerCase()];
+      const code = String(b.code || '').toUpperCase().trim();
+      const pw = String(b.password || '');
+      if (pw.length < 8) return json(res, 400, { error: 'New password must be at least 8 characters' });
+      if (!u || !u.recHash) return json(res, 401, { error: 'Wrong name or recovery code' });
+      const test = hashPassword(code, u.recSalt);
+      let ok = false;
+      try { ok = crypto.timingSafeEqual(Buffer.from(test.hash, 'hex'), Buffer.from(u.recHash, 'hex')); } catch (e) { ok = false; }
+      if (!ok) return json(res, 401, { error: 'Wrong name or recovery code' });
+      const fresh = hashPassword(pw);
+      u.salt = fresh.salt; u.hash = fresh.hash;
+      const next = makeRecoveryCode(), nh = hashPassword(next);
+      u.recSalt = nh.salt; u.recHash = nh.hash;              // old code is spent
+      for (const [tok, t] of Object.entries(DB.tokens)) if (t.name === u.name) delete DB.tokens[tok];
+      persist();
+      console.log(`[account] ${u.name} recovered their password`);
+      return json(res, 200, { token: issueToken(u.name), user: publicStats(u), recoveryCode: next });
     }
     const token = (req.headers.authorization || '').replace(/^Bearer /, '');
     if (url.pathname === '/api/me') {
       const u = userFromToken(token); if (!u) return json(res, 401, { error: 'Not signed in' });
       return json(res, 200, { user: publicStats(u), cloud: u.cloud });
+    }
+    if (url.pathname === '/api/my-data') {
+      const u = userFromToken(token); if (!u) return json(res, 401, { error: 'Not signed in' });
+      const { salt, hash, recSalt, recHash, ...rest } = u;   // never hand back secrets
+      return json(res, 200, { account: rest, note: 'Everything this server holds about you.' });
+    }
+    if (url.pathname === '/api/delete-account' && req.method === 'POST') {
+      const u = userFromToken(token); if (!u) return json(res, 401, { error: 'Not signed in' });
+      const b = await readBody(req);
+      if (!verifyPassword(String(b.password || ''), u)) return json(res, 401, { error: 'Password does not match' });
+      const key = u.name.toLowerCase();
+      delete DB.users[key];
+      for (const [tok, t] of Object.entries(DB.tokens)) if (t.name === u.name) delete DB.tokens[tok];
+      DB.events = DB.events.filter(e => e.who !== u.name);
+      for (const d of Object.values(DB.daily)) if (d.players) delete d.players[u.name];
+      persist();
+      console.log(`[account] ${u.name} deleted their account`);
+      return json(res, 200, { ok: true });
     }
     if (url.pathname === '/api/logout' && req.method === 'POST') { delete DB.tokens[token]; persist(); return json(res, 200, { ok: true }); }
     if (url.pathname === '/api/cloud' && req.method === 'POST') {
@@ -192,15 +472,192 @@ const server = http.createServer(async (req, res) => {
       if (score > (u.stats[field] | 0)) { u.stats[field] = score; persist(); }
       return json(res, 200, { ok: true, best: u.stats[field] });
     }
+    // Entitlement. The game asks this on sign-in to decide whether to show ads.
+    if (url.pathname === '/api/entitlement') {
+      const u = userFromToken(token);
+      if (!u) return json(res, 401, { error: 'Not signed in' });
+      return json(res, 200, { premium: !!u.premium, since: u.premiumSince || 0 });
+    }
+    // ---------------------------------------------------------------- payments
+    // Stripe and PayPal are both supported and both switch on purely from
+    // environment variables. With neither set the endpoint says so plainly
+    // rather than pretending to take money.
+    if (url.pathname === '/api/checkout' && req.method === 'POST') {
+      const u = userFromToken(token);
+      if (!u) return json(res, 401, { error: 'Sign in first — a purchase has to attach to an account.' });
+      if (u.premium) return json(res, 200, { alreadyPremium: true });
+      if (limited('buy:' + u.name, 12, 3600e3)) return json(res, 429, { error: 'Too many attempts, try later' });
+
+      if (STRIPE_KEY) {
+        try {
+          const params = new URLSearchParams();
+          params.set('mode', 'payment');
+          params.set('success_url', SITE_URL + '/?paid=1');
+          params.set('cancel_url', SITE_URL + '/?paid=0');
+          params.set('client_reference_id', u.name);
+          params.set('line_items[0][quantity]', '1');
+          params.set('line_items[0][price_data][currency]', CURRENCY);
+          params.set('line_items[0][price_data][unit_amount]', String(PRICE_CENTS));
+          params.set('line_items[0][price_data][product_data][name]', 'Ridgeline Season — ad-free');
+          params.set('metadata[account]', u.name);
+          const r = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + STRIPE_KEY, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params,
+          });
+          const j = await r.json();
+          if (j.url) return json(res, 200, { url: j.url });
+          console.error('[stripe]', j.error && j.error.message);
+          return json(res, 502, { error: 'Could not start checkout. Try again shortly.' });
+        } catch (e) {
+          console.error('[stripe]', e.message);
+          return json(res, 502, { error: 'Could not reach the payment provider.' });
+        }
+      }
+      if (PAYPAL_ID && PAYPAL_SECRET) {
+        try {
+          const auth = Buffer.from(PAYPAL_ID + ':' + PAYPAL_SECRET).toString('base64');
+          const tk = await fetch(PAYPAL_API + '/v1/oauth2/token', {
+            method: 'POST',
+            headers: { Authorization: 'Basic ' + auth, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'grant_type=client_credentials',
+          }).then(r => r.json());
+          if (!tk.access_token) return json(res, 502, { error: 'Payment provider refused the request.' });
+          const order = await fetch(PAYPAL_API + '/v2/checkout/orders', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + tk.access_token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              intent: 'CAPTURE',
+              purchase_units: [{ custom_id: u.name, description: 'Ridgeline Season — ad-free',
+                amount: { currency_code: CURRENCY.toUpperCase(), value: (PRICE_CENTS / 100).toFixed(2) } }],
+              application_context: { return_url: SITE_URL + '/?paid=1', cancel_url: SITE_URL + '/?paid=0' },
+            }),
+          }).then(r => r.json());
+          const link = (order.links || []).find(l => l.rel === 'approve');
+          if (link) { PENDING.set(order.id, u.name); return json(res, 200, { url: link.href, orderId: order.id }); }
+          return json(res, 502, { error: 'Could not start checkout.' });
+        } catch (e) {
+          console.error('[paypal]', e.message);
+          return json(res, 502, { error: 'Could not reach the payment provider.' });
+        }
+      }
+      return json(res, 503, { error: 'Payments are not connected yet on this server.', notConfigured: true });
+    }
+
+    // Stripe tells us the money arrived. Webhooks are the only thing we trust to
+    // grant ad-free — never the browser saying it paid.
+    if (url.pathname === '/api/stripe-webhook' && req.method === 'POST') {
+      // No signing secret means we cannot tell a real Stripe event from anyone
+      // on the internet posting one. Refuse rather than hand out free upgrades.
+      if (!STRIPE_WEBHOOK_SECRET) {
+        console.warn('[stripe] webhook refused — STRIPE_WEBHOOK_SECRET is not set');
+        return json(res, 503, { error: 'Webhook not configured' });
+      }
+      const raw = await new Promise(r => { let d = ''; req.on('data', c => d += c); req.on('end', () => r(d)); });
+      {
+        const sig = req.headers['stripe-signature'] || '';
+        const parts = Object.fromEntries(String(sig).split(',').map(kv => kv.split('=')));
+        const expected = crypto.createHmac('sha256', STRIPE_WEBHOOK_SECRET).update(parts.t + '.' + raw).digest('hex');
+        let ok = false;
+        try { ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(parts.v1 || '')); } catch (e) { ok = false; }
+        if (!ok) { console.warn('[stripe] rejected a webhook with a bad signature'); return json(res, 400, { error: 'bad signature' }); }
+      }
+      let ev; try { ev = JSON.parse(raw); } catch (e) { return json(res, 400, { error: 'bad json' }); }
+      if (ev.type === 'checkout.session.completed') {
+        const who = ev.data.object.client_reference_id || (ev.data.object.metadata || {}).account;
+        grantPremium(who, 'stripe');
+      }
+      return json(res, 200, { received: true });
+    }
+
+    // PayPal sends the buyer back here; we capture the order server-side.
+    if (url.pathname === '/api/paypal-capture' && req.method === 'POST') {
+      const b = await readBody(req);
+      const id = String(b.orderId || '');
+      const who = PENDING.get(id);
+      if (!who) return json(res, 400, { error: 'Unknown order' });
+      try {
+        const auth = Buffer.from(PAYPAL_ID + ':' + PAYPAL_SECRET).toString('base64');
+        const tk = await fetch(PAYPAL_API + '/v1/oauth2/token', { method: 'POST',
+          headers: { Authorization: 'Basic ' + auth, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'grant_type=client_credentials' }).then(r => r.json());
+        const cap = await fetch(PAYPAL_API + '/v2/checkout/orders/' + id + '/capture', { method: 'POST',
+          headers: { Authorization: 'Bearer ' + tk.access_token, 'Content-Type': 'application/json' } }).then(r => r.json());
+        if (cap.status === 'COMPLETED') { PENDING.delete(id); grantPremium(who, 'paypal'); return json(res, 200, { ok: true }); }
+        return json(res, 402, { error: 'Payment not completed' });
+      } catch (e) { return json(res, 502, { error: 'Could not confirm the payment' }); }
+    }
+    if (url.pathname === '/api/event' && req.method === 'POST') {
+      if (limited('ev:' + ip, 240, 3600e3)) return json(res, 429, { error: 'Too many events' });
+      const b = await readBody(req);
+      const u = userFromToken(token);
+      if (u) { u.lastSeen = Date.now(); }
+      const type = String(b.type || '').slice(0, 24);
+      if (!['hunt_start', 'hunt_end', 'signup', 'signin', 'guest_start', 'mode'].includes(type)) return json(res, 400, { error: 'Unknown event' });
+      trackEvent(type, u ? u.name : null, b.data, !!b.guest, String(b.session || '').slice(0, 16));
+      return json(res, 200, { ok: true });
+    }
     if (url.pathname === '/api/leaderboard') {
       const key = ['bestArena', 'arenaWins', 'harvests', 'campaignStars', 'chalLong', 'chalKills', 'chalTags'].includes(url.searchParams.get('by')) ? url.searchParams.get('by') : 'bestArena';
-      const rows = Object.values(DB.users).map(publicStats).sort((a, b) => b[key] - a[key]).slice(0, 25);
-      return json(res, 200, { by: key, rows });
+      const thisWeek = url.searchParams.get('season') === '1';
+      let rows;
+      if (thisWeek) {
+        const sk = ['bestArena', 'harvests', 'arenaWins'].includes(key) ? key : 'bestArena';
+        rows = Object.values(DB.users).map(u => { const sn = ensureSeason(u); return { name: u.name, [key]: sn[sk] | 0 }; })
+          .filter(r => r[key] > 0).sort((a, b) => b[key] - a[key]).slice(0, 25);
+      } else {
+        rows = Object.values(DB.users).map(publicStats).sort((a, b) => b[key] - a[key]).slice(0, 25);
+      }
+      return json(res, 200, { by: key, season: thisWeek, seasonKey: seasonKey(), endsAt: seasonEndsAt(), rows });
+    }
+    // Past weeks, so winners stay on the record even after the reset.
+    if (url.pathname === '/api/seasons') {
+      const past = Object.values(DB.seasons).sort((a, b) => b.key.localeCompare(a.key)).slice(0, 12)
+        .map(s => ({ key: s.key, closed: s.closed, top: s.table.slice(0, 3) }));
+      return json(res, 200, { current: seasonKey(), endsAt: seasonEndsAt(), past });
     }
     if (url.pathname.startsWith('/api/admin/')) {
-      if (!ADMIN_KEY || req.headers['x-admin-key'] !== ADMIN_KEY) return json(res, 403, { error: 'Forbidden' });
+      if (!adminOk(req.headers['x-admin-key'])) return json(res, 403, { error: 'Forbidden' });
       if (url.pathname === '/api/admin/users') return json(res, 200, Object.values(DB.users).map(u => ({ ...publicStats(u), created: u.created })));
       if (url.pathname === '/api/admin/rooms') return json(res, 200, [...rooms.values()].map(r => ({ name: r.name, players: [...r.players.values()].map(p => p.name), seconds: Math.round(r.timeLeft) })));
+      if (url.pathname === '/api/admin/stats') return json(res, 200, analytics());
+      // One-click backup: everything the server holds, as a file you can save.
+      if (url.pathname === '/api/admin/backup') {
+        res.writeHead(200, { 'Content-Type': 'application/json',
+          'Content-Disposition': 'attachment; filename="ridgeline-backup-' + today() + '.json"' });
+        return res.end(JSON.stringify(DB));
+      }
+      // Grant or revoke ad-free manually — for testers, friends, refunds, and
+      // for honouring a purchase taken outside the app.
+      // Someone who loses BOTH their password and their recovery code is
+      // otherwise locked out for good. This issues a fresh recovery code so you
+      // can read it back to them; it never reveals or sets a password.
+      if (url.pathname === '/api/admin/reset' && req.method === 'POST') {
+        const b = await readBody(req);
+        const u = DB.users[String(b.name || '').toLowerCase()];
+        if (!u) return json(res, 404, { error: 'No such account' });
+        const code = makeRecoveryCode(), h = hashPassword(code);
+        u.recSalt = h.salt; u.recHash = h.hash;
+        for (const [tok, t] of Object.entries(DB.tokens)) if (t.name === u.name) delete DB.tokens[tok];
+        persist();
+        console.log(`[admin] issued a new recovery code for ${u.name}`);
+        return json(res, 200, { name: u.name, recoveryCode: code,
+          note: 'Give this to the player. They use it on the sign-in screen to set a new password.' });
+      }
+      if (url.pathname === '/api/admin/premium' && req.method === 'POST') {
+        const b = await readBody(req);
+        const u = DB.users[String(b.name || '').toLowerCase()];
+        if (!u) return json(res, 404, { error: 'No such account' });
+        u.premium = b.premium !== false;
+        u.premiumSince = u.premium ? Date.now() : 0;
+        persist();
+        console.log(`[premium] ${u.name} -> ${u.premium}`);
+        return json(res, 200, { name: u.name, premium: u.premium });
+      }
+    }
+    if (url.pathname === '/admin' || url.pathname === '/admin/') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(ADMIN_PAGE);
     }
     json(res, 404, { error: 'Not found' });
   } catch (e) { json(res, 400, { error: e.message }); }
@@ -299,6 +756,14 @@ function resolveShot(room, p, m) {
 }
 
 // ---------------------------------------------------------------- rooms
+function adminOk(given) {
+  // Constant-time: a plain !== comparison returns faster on an early mismatch,
+  // which leaks the key one character at a time to anyone patient.
+  if (!ADMIN_KEY || !given) return false;
+  const a = Buffer.from(String(given)), b = Buffer.from(ADMIN_KEY);
+  if (a.length !== b.length) return false;
+  try { return crypto.timingSafeEqual(a, b); } catch (e) { return false; }
+}
 const rooms = new Map();
 let nextPid = 1;
 function getRoom(name) {
@@ -315,20 +780,24 @@ function send(ws, o) { if (ws.readyState === 1) ws.send(JSON.stringify(o)); }
 function broadcast(room, o, except) { const m = JSON.stringify(o); for (const p of room.players.values()) if (p.id !== except && p.ws.readyState === 1) p.ws.send(m); }
 function startMatch(room) {
   room.running = true; room.time = 0; room.timeLeft = MATCH_SECONDS; room.animals = [];
-  for (const p of room.players.values()) { p.score = 0; p.kills = 0; p.trophies = 0; p.longest = 0; }
+  for (const p of room.players.values()) { p.score = 0; p.kills = 0; p.tags = 0; p.trophies = 0; p.longest = 0; }
   for (let i = 0; i < 18; i++) room.animals.push(spawnAnimal(room));
   broadcast(room, { t: 'start', seconds: MATCH_SECONDS });
   console.log(`[match] ${room.name} started with ${room.players.size}`);
 }
 function endMatch(room) {
   room.running = false;
-  const board = [...room.players.values()].map(p => ({ id: p.id, name: p.name, score: p.score, kills: p.kills })).sort((a, b) => b.score - a.score);
+  const board = [...room.players.values()]
+    .map(p => ({ id: p.id, name: p.name, score: p.score, kills: p.kills, tags: p.tags, total: p.kills + p.tags }))
+    .sort((a, b) => b.total - a.total || b.score - a.score);
   for (const p of room.players.values()) {
     if (!p.user) continue;                                    // guests are not recorded
     const st = p.user.stats; st.arenaMatches++; st.arenaKills += p.kills; st.harvests += p.kills;
     st.trophies += p.trophies; st.longest = Math.max(st.longest, Math.round(p.longest));
     st.bestArena = Math.max(st.bestArena, p.score);
-    if (board[0] && board[0].id === p.id && room.players.size > 1) st.arenaWins++;
+    seasonBump(p.user, 'bestArena', p.score, true);
+    seasonBump(p.user, 'harvests', p.kills + p.tags, false);
+    if (board[0] && board[0].id === p.id && room.players.size > 1) { st.arenaWins++; seasonBump(p.user, 'arenaWins', 1, false); }
   }
   persist();
   broadcast(room, { t: 'end', board });
@@ -352,7 +821,7 @@ wss.on('connection', (ws, req) => {
       if (room.players.size >= MAX_PER_ROOM) { send(ws, { t: 'error', message: 'Room is full' }); return ws.close(); }
       const name = user ? user.name : ('Guest' + (String(m.name || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 10) || nextPid));
       p = { id: 'p' + (nextPid++), name, user, color: COLORS[room.players.size % COLORS.length], ws,
-            x: 0, z: 0, yaw: 0, score: 0, kills: 0, trophies: 0, longest: 0, firing: 0, lastShot: -9, lastState: Date.now() };
+            x: 0, z: 0, yaw: 0, score: 0, kills: 0, tags: 0, trophies: 0, longest: 0, firing: 0, lastShot: -9, lastState: Date.now() };
       room.players.set(p.id, p);
       send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
                  players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color })) });
@@ -367,7 +836,11 @@ wss.on('connection', (ws, req) => {
       // Clamp movement to a sane speed so nobody teleports across the map.
       const now = Date.now(), dt = Math.max(.02, (now - p.lastState) / 1000); p.lastState = now;
       const nx = +m.x, nz = +m.z; if (!Number.isFinite(nx) || !Number.isFinite(nz)) return;
-      const dx = nx - p.x, dz = nz - p.z, dist = Math.hypot(dx, dz), maxD = 6.5 * dt + .5;
+      // Headroom over the client's real top speed (8.4 m/s sprinting) plus slack
+      // for network jitter. The old 6.5 limit was BELOW sprint speed, so anyone
+      // running online was pulled backwards and their shots were rejected as
+      // position mismatches. It still stops teleporting.
+      const dx = nx - p.x, dz = nz - p.z, dist = Math.hypot(dx, dz), maxD = 10 * dt + 1.2;
       if (dist > maxD) { p.x += dx / dist * maxD; p.z += dz / dist * maxD; } else { p.x = nx; p.z = nz; }
       const rr = Math.hypot(p.x, p.z); if (rr > MAP_R) { p.x *= MAP_R / rr; p.z *= MAP_R / rr; }
       p.yaw = +m.yaw || 0; p.firing = m.firing ? 1 : 0;
@@ -378,6 +851,18 @@ wss.on('connection', (ws, req) => {
       const r = resolveShot(room, p, m);
       send(ws, { t: 'shotResult', ok: r.ok, why: r.why, hit: r.hit, score: p.score });
       if (r.hit && r.hit.killed) broadcast(room, { t: 'kill', id: p.id, name: p.name, species: r.hit.species, points: r.hit.pts, animal: r.hit.id }, p.id);
+      return;
+    }
+    // Walking out to a carcass is half the work, so it counts toward the win.
+    if (m.t === 'tag') {
+      if (!room.running) return;
+      const a = room.animals.find(x => x.id === (m.id | 0));
+      if (!a || a.state !== 'dead' || a.tagged) return;
+      if (Math.hypot(a.x - p.x, a.z - p.z) > 6) return;     // must actually be there
+      a.tagged = true; p.tags++;
+      p.score += Math.round(SP[a.sp].pts * 0.15);
+      send(ws, { t: 'tagged', id: a.id, tags: p.tags, score: p.score });
+      broadcast(room, { t: 'feed', name: p.name, text: 'tagged a ' + a.sp }, p.id);
       return;
     }
     if (m.t === 'chat') broadcast(room, { t: 'chat', name: p.name, text: String(m.text || '').slice(0, 120) }, p.id);
@@ -404,8 +889,8 @@ setInterval(() => {
     broadcast(room, {
       t: 'states',
       seconds: Math.max(0, room.timeLeft),
-      players: [...room.players.values()].map(q => ({ id: q.id, x: +q.x.toFixed(2), z: +q.z.toFixed(2), yaw: +q.yaw.toFixed(2), score: q.score, kills: q.kills, firing: q.firing })),
-      animals: room.animals.map(a => ({ id: a.id, sp: a.sp, x: +a.x.toFixed(2), z: +a.z.toFixed(2), h: +a.heading.toFixed(2), v: +a.speed.toFixed(1), st: a.state === 'dead' ? 'd' : a.state === 'flee' ? 'f' : a.state === 'walk' ? 'w' : 'g', hp: +(a.hp / a.maxhp).toFixed(2), tr: a.trophy ? 1 : 0, m: a.male ? 1 : 0, wd: a.wounded ? 1 : 0 })),
+      players: [...room.players.values()].map(q => ({ id: q.id, x: +q.x.toFixed(2), z: +q.z.toFixed(2), yaw: +q.yaw.toFixed(2), score: q.score, kills: q.kills, tags: q.tags, firing: q.firing })),
+      animals: room.animals.map(a => ({ id: a.id, sp: a.sp, tg: a.tagged ? 1 : 0, x: +a.x.toFixed(2), z: +a.z.toFixed(2), h: +a.heading.toFixed(2), v: +a.speed.toFixed(1), st: a.state === 'dead' ? 'd' : a.state === 'flee' ? 'f' : a.state === 'walk' ? 'w' : 'g', hp: +(a.hp / a.maxhp).toFixed(2), tr: a.trophy ? 1 : 0, m: a.male ? 1 : 0, wd: a.wounded ? 1 : 0 })),
     });
     for (const q of room.players.values()) q.firing = 0;
   }
@@ -419,6 +904,14 @@ setInterval(() => {
 
 server.listen(PORT, () => {
   console.log(`Ridgeline Season server on port ${PORT}`);
+  // Say plainly what is not yet locked down, rather than failing quietly.
+  const warn = [];
+  if (!ADMIN_KEY) warn.push('ADMIN_KEY is not set — /admin and the admin API are switched OFF.');
+  else if (ADMIN_KEY.length < 16) warn.push('ADMIN_KEY is short. Use 24+ random characters.');
+  if (ORIGIN === '*') warn.push('ORIGIN is "*" — any website can call this server. Set it to your game URL.');
+  if (STRIPE_KEY && !STRIPE_WEBHOOK_SECRET) warn.push('STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not — purchases will never complete.');
+  if (!STRIPE_KEY && !PAYPAL_ID) warn.push('No payment provider configured — the buy button will say so honestly.');
+  if (warn.length) { console.log('\n  ⚠  Before taking this live:'); for (const w of warn) console.log('     - ' + w); console.log(''); }
   console.log(`  Game connects to:  ws://localhost:${PORT}   (wss:// behind HTTPS)`);
   console.log(`  API / status:      http://localhost:${PORT}/api/status`);
   console.log(`  Accounts on disk:  ${DATA_FILE}`);
