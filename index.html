@@ -625,16 +625,18 @@
       <h2>Open arena — hunt against other people</h2>
       <p style="font-size:13px" id="arenaNote"></p>
       <div class="net">
-        <label>Hunter name <input id="pName" maxlength="14" placeholder="Hunter"></label>
-        <button id="arenaBtn" class="ghost">Play offline vs bots</button>
-        <div class="netrow" style="margin-top:6px">
-          <label>Server <input id="pServer" placeholder="wss://your-server.example:8080"></label>
-          <label style="max-width:120px">Room <input id="pRoom" maxlength="8" placeholder="RIDGE"></label>
-        </div>
-        <button id="arenaOnlineBtn" class="ghost">Join online arena</button>
-        <p id="netStatus" style="font-size:12px;color:var(--muted);min-height:16px"></p>
+        <button id="arenaOnlineBtn">Join a match</button>
+        <p id="netStatus" style="font-size:12.5px;color:var(--muted);min-height:16px">Three minutes, everything is fair game, most animals brought in wins.</p>
+        <details style="margin-top:10px">
+          <summary style="font-size:12px;color:var(--faint);cursor:pointer">Play with friends, or change your name</summary>
+          <label>Hunter name <input id="pName" maxlength="14" placeholder="Hunter"></label>
+          <label>Room — share this word and you will be in the same match
+            <input id="pRoom" maxlength="8" placeholder="RIDGE"></label>
+          <button id="arenaBtn" class="ghost">Practise offline instead</button>
+          <label style="margin-top:12px">Server (leave alone unless you run your own)
+            <input id="pServer" placeholder="uses the game's own server"></label>
+        </details>
       </div>
-      <p style="font-size:12px;color:var(--muted)">Online play needs a relay server — browsers can't reach each other directly. A ready-to-run one ships alongside this file (<b>server.js</b>); start it, put its address in the Server box, share the room name, and everyone in that room hunts the same map. Without a server the arena runs offline against bots.</p>
       <h2>Account</h2>
       <div class="net" id="acctBox">
         <div id="acctOut" class="hidden">
@@ -1613,7 +1615,8 @@ function stepBot(r,dt,onEvent){
 const RIVAL_NAMES=['Dale','Marisol','Otis','Rennick','Sable','Hutch'];
 const RIVAL_COLORS=['#e2542b','#2b7fe2','#8e2be2','#e2c02b','#2be29a','#e22b7f'];
 let NETA=null;
-function httpBase(){ const s=(save.server||'').trim(); if(!s)return ''; return s.replace(/^wss:/,'https:').replace(/^ws:/,'http:').replace(/\/+$/,''); }
+function serverURL(){ return ((save.server||'').trim())||DEFAULT_SERVER||''; }
+function httpBase(){ const s=serverURL(); if(!s)return ''; return s.replace(/^wss:/,'https:').replace(/^ws:/,'http:').replace(/\/+$/,''); }
 async function api(path,body,method){ const base=httpBase(); if(!base)throw new Error('No server address set');
   const r=await fetch(base+path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json',...(save.token?{Authorization:'Bearer '+save.token}:{})},body:body?JSON.stringify(body):undefined});
   const j=await r.json().catch(()=>({})); if(!r.ok)throw new Error(j.error||('HTTP '+r.status)); return j; }
@@ -3489,10 +3492,12 @@ async function startArena(online){
   if(srvEl)save.server=srvEl.value.trim(); if(roomEl)save.room=roomEl.value.trim().toUpperCase();
   persist();
   let adapter;
-  if(online){ if(!save.server){ setTxt('netStatus','Enter a server address first.'); return; }
-    setTxt('netStatus','Connecting to '+save.server+' …');
-    adapter=new WebSocketAdapter(save.server,save.room||'RIDGE',save.name); }
-  else adapter=new LocalAIAdapter(3);
+  if(online){ const url=serverURL();
+    if(!url){ setTxt('netStatus','This copy of the game has no server set up, so the arena runs against bots.'); }
+    else {
+      setTxt('netStatus','Finding a match…');
+      adapter=new WebSocketAdapter(url,save.room||'RIDGE',save.name||'Hunter'); } }
+  if(!adapter)adapter=new LocalAIAdapter(3);
   let info;
   try{ info=await adapter.start(); }
   catch(err){ setTxt('netStatus','Could not connect: '+err.message+'. Playing offline against bots instead.');

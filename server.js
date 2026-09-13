@@ -390,7 +390,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/login' && req.method === 'POST') {
       if (limited('login:' + ip, 20, 900e3)) return json(res, 429, { error: 'Too many attempts. Wait 15 minutes.' });
       const b = await readBody(req);
-      const u = DB.users[String(b.name || '').toLowerCase()];
+      const u = DB.users[String(b.name || '').trim().toLowerCase()];
       if (!u || !verifyPassword(String(b.password || ''), u)) return json(res, 401, { error: 'Wrong name or password' });
       u.lastSeen = Date.now(); persist();
       return json(res, 200, { token: issueToken(u.name), user: publicStats(u), cloud: u.cloud });
@@ -398,7 +398,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/recover' && req.method === 'POST') {
       if (limited('rec:' + ip, 10, 3600e3)) return json(res, 429, { error: 'Too many attempts. Try later.' });
       const b = await readBody(req);
-      const u = DB.users[String(b.name || '').toLowerCase()];
+      const u = DB.users[String(b.name || '').trim().toLowerCase()];
       const code = String(b.code || '').toUpperCase().trim();
       const pw = String(b.password || '');
       if (pw.length < 8) return json(res, 400, { error: 'New password must be at least 8 characters' });
@@ -634,7 +634,7 @@ const server = http.createServer(async (req, res) => {
       // can read it back to them; it never reveals or sets a password.
       if (url.pathname === '/api/admin/reset' && req.method === 'POST') {
         const b = await readBody(req);
-        const u = DB.users[String(b.name || '').toLowerCase()];
+        const u = DB.users[String(b.name || '').trim().toLowerCase()];
         if (!u) return json(res, 404, { error: 'No such account' });
         const code = makeRecoveryCode(), h = hashPassword(code);
         u.recSalt = h.salt; u.recHash = h.hash;
@@ -646,7 +646,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === '/api/admin/premium' && req.method === 'POST') {
         const b = await readBody(req);
-        const u = DB.users[String(b.name || '').toLowerCase()];
+        const u = DB.users[String(b.name || '').trim().toLowerCase()];
         if (!u) return json(res, 404, { error: 'No such account' });
         u.premium = b.premium !== false;
         u.premiumSince = u.premium ? Date.now() : 0;
