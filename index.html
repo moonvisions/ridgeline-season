@@ -1259,7 +1259,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'focus-v1';   // bump this whenever you change the policy
+const BUILD = 'focus-v2';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -3815,6 +3815,10 @@ async function startArena(online,netMode){
   arenaAuth=!!info.auth; remoteAnimals=new Map();
   LV=null; mode='arena'; audio(); resetDay(info.seed);
   arenaSeed=info.seed; arenaOnline=!!online&&adapter instanceof WebSocketAdapter; if(!arenaOnline)arenaAuth=false;
+  // Tell the server where we actually spawned, straight away. Without this it
+  // assumed the origin and rejected our first shots as a position mismatch —
+  // which, from the player's side, looked like bullets passing through animals.
+  if(arenaAuth&&NETA&&NETA.emit)NETA.emit({t:'state',x:P.x,z:P.z,yaw:P.yaw,score:0,kills:0,firing:false});
   timeLeft=180; DAY=180; fogDay=1; arenaEnded=false; killFeed=[]; streak=0;
   animals=[]; if(!arenaAuth)withSeed(info.seed^0x5f3a,()=>{ for(let i=0;i<18;i++)animals.push(makeTrophy(spawnAnimal(false))); });
   if(arenaAuth){ timeLeft=matchSeconds; DAY=matchSeconds; }
