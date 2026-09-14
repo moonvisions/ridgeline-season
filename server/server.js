@@ -202,16 +202,16 @@ function seasonEndsAt() {
 // Roll a player onto the current season, filing last week's result first.
 function ensureSeason(u) {
   const key = seasonKey();
-  if (!u.season) { u.season = { key, bestArena: 0, harvests: 0, arenaWins: 0, stars: 0 }; return u.season; }
+  if (!u.season) { u.season = { key, bestArena: 0, harvests: 0, arenaWins: 0, bestWave: 0, stars: 0 }; return u.season; }
   if (u.season.key !== key) {
     const old = u.season;
-    if (old.bestArena || old.harvests || old.arenaWins) {
+    if (old.bestArena || old.harvests || old.arenaWins || old.bestWave) {
       const bucket = DB.seasons[old.key] || (DB.seasons[old.key] = { key: old.key, closed: Date.now(), table: [] });
-      bucket.table.push({ name: u.name, bestArena: old.bestArena, harvests: old.harvests, arenaWins: old.arenaWins });
+      bucket.table.push({ name: u.name, bestArena: old.bestArena, harvests: old.harvests, arenaWins: old.arenaWins, bestWave: old.bestWave | 0 });
       bucket.table.sort((a, b) => b.bestArena - a.bestArena);
       bucket.table = bucket.table.slice(0, 100);
     }
-    u.season = { key, bestArena: 0, harvests: 0, arenaWins: 0, stars: 0 };
+    u.season = { key, bestArena: 0, harvests: 0, arenaWins: 0, bestWave: 0, stars: 0 };
   }
   return u.season;
 }
@@ -661,11 +661,11 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (url.pathname === '/api/leaderboard') {
-      const key = ['bestArena', 'arenaWins', 'harvests', 'campaignStars', 'chalLong', 'chalKills', 'chalTags'].includes(url.searchParams.get('by')) ? url.searchParams.get('by') : 'bestArena';
+      const key = ['bestArena', 'arenaWins', 'harvests', 'campaignStars', 'chalLong', 'chalKills', 'chalTags', 'bestWave'].includes(url.searchParams.get('by')) ? url.searchParams.get('by') : 'bestArena';
       const thisWeek = url.searchParams.get('season') === '1';
       let rows;
       if (thisWeek) {
-        const sk = ['bestArena', 'harvests', 'arenaWins'].includes(key) ? key : 'bestArena';
+        const sk = ['bestArena', 'harvests', 'arenaWins', 'bestWave'].includes(key) ? key : 'bestArena';
         rows = Object.values(DB.users).map(u => { const sn = ensureSeason(u); return { name: u.name, [key]: sn[sk] | 0 }; })
           .filter(r => r[key] > 0).sort((a, b) => b[key] - a[key]).slice(0, 25);
       } else {
@@ -734,8 +734,8 @@ const SP = {
   moose: { k: 1.85, rx: .72, ry: .32, bodyY: .9, hp: 2.5, pts: 400, flee: 6,   weight: 7,  antlers: true },
   sheep: { k: 1.1,  rx: .62, ry: .29, bodyY: .75, hp: 1.2, pts: 320, flee: 8,  weight: 8,  antlers: true },
   // predators — only ever spawned by Ridge Defense
-  bear:  { k: 1.5,  rx: .75, ry: .40, bodyY: .90, hp: 6,   pts: 600, flee: 0,   weight: 0,  antlers: false, pred: true, charge: 7.2, bite: 24, reach: 2.6 },
-  lion:  { k: 1.2,  rx: .60, ry: .28, bodyY: .72, hp: 3.6, pts: 500, flee: 0,   weight: 0,  antlers: false, pred: true, charge: 9.6, bite: 15, reach: 2.2 },
+  bear:  { k: 1.5,  rx: .75, ry: .40, bodyY: .90, hp: 6,   pts: 210, flee: 0,   weight: 0,  antlers: false, pred: true, charge: 7.2, bite: 13, reach: 2.6 },
+  lion:  { k: 1.2,  rx: .60, ry: .28, bodyY: .72, hp: 3.6, pts: 170, flee: 0,   weight: 0,  antlers: false, pred: true, charge: 9.6, bite: 8,  reach: 2.2 },
 };
 const SPK = Object.keys(SP).filter(k => !SP[k].pred);   // spawnAnimal never picks a predator
 const TAU = Math.PI * 2;
@@ -830,11 +830,11 @@ function resolveShot(room, p, m) {
 // server so every player fights the same animals at the same moment.
 const DEF_WARMUP = 12, DEF_BREAK = 16, DEF_MAX = 6;
 const SHOP = {
-  ammo:   { name: 'Resupply',          cost: w => 150,            max: 99, desc: 'Full magazine and quiver' },
-  damage: { name: 'Heavier loads',     cost: w => 400 + 200 * w,  max: 4,  desc: '+25% damage per level' },
-  rate:   { name: 'Faster action',     cost: w => 350 + 150 * w,  max: 3,  desc: 'Shoot sooner after each shot' },
-  health: { name: 'Thicker hide',      cost: w => 500 + 250 * w,  max: 3,  desc: '+40 max health, healed now' },
-  revive: { name: 'Second wind',       cost: w => 300,            max: 1,  desc: 'Get up once on your own' },
+  ammo:   { name: 'Resupply',          cost: w => 90 + 10 * w,    max: 99, desc: 'Full magazine and quiver' },
+  damage: { name: 'Heavier loads',     cost: w => 540 + 160 * w,  max: 5,  desc: '+25% damage per level' },
+  rate:   { name: 'Faster action',     cost: w => 460 + 140 * w,  max: 4,  desc: 'Shoot sooner after each shot' },
+  health: { name: 'Thicker hide',      cost: w => 560 + 200 * w,  max: 5,  desc: '+40 max health, healed now' },
+  revive: { name: 'Second wind',       cost: w => 260 + 90 * w,    max: 2,  desc: 'Get up once on your own' },
 };
 function isDefense(room) { return room.mode === 'defense'; }
 function defPlayerInit(p) {
@@ -856,13 +856,26 @@ function spawnPredator(room, sp, wave) {
     speed: 0, state: 'stalk', t: 0, hp: s.hp * hpMul, hpMax: s.hp * hpMul, spMul,
     pred: true, wave, cool: 1.5 + Math.random(), retreatT: 0, tagged: false, trophy: false, wounded: false };
 }
-function waveRoster(n) {
-  const bears = 1 + n, lions = n >= 3 ? n - 2 : 0;          // w1: 2 bears · w3: 4 bears + 1 lion · w5: 6 + 3
-  return { bears: Math.min(bears, 9), lions: Math.min(lions, 7) };
+function waveRoster(n, players) {
+  // Solo: 2 bears on wave 1, rising to about 9 by wave 12. A full squad of six
+  // faces roughly two and a half times that. Lions arrive at wave 4 and are the
+  // fast flankers, never the bulk.
+  const team = Math.max(1, players | 0);
+  const scale = 1 + .38 * (team - 1);
+  let bears = Math.max(1, Math.round((1 + n * .55) * scale));
+  let lions = n < 4 ? 0 : Math.max(1, Math.round((n - 3) * .45 * scale));
+  // However far the waves climb, no more than this many on the ground at once —
+  // past a point it stops being a fight and becomes a wall.
+  const capTotal = Math.round(11 * scale);
+  if (bears + lions > capTotal) {
+    const keepLions = Math.min(lions, Math.floor(capTotal * .4));
+    lions = keepLions; bears = Math.max(1, capTotal - keepLions);
+  }
+  return { bears: Math.min(bears, 12), lions: Math.min(lions, 8) };
 }
 function defStartWave(room) {
   room.wave++; room.phase = 'wave'; room.running = true;
-  const r = waveRoster(room.wave);
+  const r = waveRoster(room.wave, realCount(room) + [...room.players.values()].filter(p => p.bot).length * .5);
   room.animals = room.animals.filter(a => !a.pred);
   for (let i = 0; i < r.bears; i++) room.animals.push(spawnPredator(room, 'bear', room.wave));
   for (let i = 0; i < r.lions; i++) room.animals.push(spawnPredator(room, 'lion', room.wave));
@@ -881,11 +894,14 @@ function shopFor(room) {
   return out;
 }
 function defStartRun(room) {
+  balanceBots(room);
   room.phase = 'warm'; room.warmLeft = DEF_WARMUP; room.wave = 0; room.running = false; room.time = 0;
   room.animals = [];
   for (let i = 0; i < 8; i++) room.animals.push(spawnAnimal(room));
+  balanceBots(room);
   for (const p of room.players.values()) defPlayerInit(p);
-  broadcast(room, { t: 'warmup', seconds: DEF_WARMUP, players: room.players.size, defense: true });
+  broadcast(room, { t: 'warmup', seconds: DEF_WARMUP, players: room.players.size, defense: true,
+    team: [...room.players.values()].map(q => ({ id: q.id, name: q.name, bot: !!q.bot, color: q.color })) });
 }
 function defEnd(room) {
   room.phase = 'over'; room.running = false;
@@ -896,6 +912,7 @@ function defEnd(room) {
     if (p.bot || !p.user) continue;
     const st = p.user.stats; st.bestWave = Math.max(st.bestWave | 0, room.wave); st.harvests += p.kills;
     seasonBump(p.user, 'harvests', p.kills + p.tags, false);
+    seasonBump(p.user, 'bestWave', room.wave, true);
     p.user.lastSeen = Date.now();
   }
   persist();
@@ -918,14 +935,14 @@ function stepPredator(room, a, dt) {
   }
   a.speed = 0; a.cool -= dt;
   if (a.cool > 0) return;
-  a.cool = 1.25;
-  tgt.hp -= s.bite;
+  a.cool = a.sp === 'lion' ? 1.35 : 1.7;
+  tgt.hp -= Math.round(s.bite * (1 + .05 * (a.wave - 1)));
   send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp });
   if (tgt.hp <= 0 && !tgt.down) {
     if (tgt.up && tgt.up.revive > 0) { tgt.up.revive--; tgt.hp = Math.round(tgt.maxHp * .5); send(tgt.ws, { t: 'secondwind', hp: tgt.hp }); }
     else { tgt.down = true; tgt.downT = 0; tgt.reviveT = 0; broadcast(room, { t: 'down', id: tgt.id, name: tgt.name }); }
   }
-  if (Math.random() < .35) { a.retreatT = 1.4; a.heading += Math.PI; }
+  if (Math.random() < (a.sp === 'lion' ? .8 : .5)) { a.retreatT = a.sp === 'lion' ? 2.2 : 1.6; a.heading += Math.PI; }
 }
 function defTick(room, dt) {
   if (room.phase === 'warm') {
@@ -977,13 +994,13 @@ function stepDefenseBot(room, b, dt) {
 }
 function predKilled(room, p, a, zone, dist) {
   const s = SP[a.sp];
-  const pts = Math.round(s.pts * (1 + .35 * (a.wave - 1)) * (zone === 'vital' || zone === 'head' ? 1.3 : 1));
+  const pts = Math.round(s.pts * (1 + .16 * (a.wave - 1)) * (zone === 'vital' || zone === 'head' ? 1.3 : 1));
   p.pts = (p.pts | 0) + pts; p.ptsEarned = (p.ptsEarned | 0) + pts; p.kills++;
   broadcast(room, { t: 'kill', id: p.id, name: p.name, species: a.sp, points: pts, animal: a.id, pred: true });
 }
 function defShot(room, p, m) {
   if (p.down) return { ok: false, why: 'You are down' };
-  const rateMul = 1 - .18 * (p.up.rate | 0);
+  const rateMul = 1 - .15 * (p.up.rate | 0);
   const weapon = m.weapon === 'bow' ? 'bow' : 'rifle';
   if (room.time - p.lastShot < (weapon === 'bow' ? 1.0 : 0.8) * rateMul) return { ok: false, why: 'too fast' };
   const base = resolveShotGeneric(room, p, m);          // same aim maths as the arena
@@ -1058,7 +1075,7 @@ function balanceBots(room) {
     while (dropBot(room));
     return;
   }
-  const want = Math.max(0, (room.mode === 'defense' ? 3 : MIN_PARTICIPANTS) - real);
+  const want = Math.max(0, (room.mode === 'defense' ? 4 : MIN_PARTICIPANTS) - real);
   let bots = room.players.size - real;
   while (bots < want) { addBot(room); bots++; }
   while (bots > want) { if (!dropBot(room)) break; bots--; }
@@ -1179,7 +1196,8 @@ wss.on('connection', (ws, req) => {
       broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
       if (isDefense(room)) {
         if (!room.phase || room.phase === 'over') defStartRun(room);
-        else if (room.phase === 'warm') send(ws, { t: 'warmup', seconds: Math.ceil(room.warmLeft), players: room.players.size, defense: true });
+        else if (room.phase === 'warm') send(ws, { t: 'warmup', seconds: Math.ceil(room.warmLeft), players: room.players.size, defense: true,
+          team: [...room.players.values()].map(q => ({ id: q.id, name: q.name, bot: !!q.bot, color: q.color })) });
         else send(ws, { t: 'wave', n: room.wave, late: true });
       }
       else if (room.phase === 'warm') send(ws, { t: 'warmup', seconds: Math.ceil(room.warmLeft), players: room.players.size });
@@ -1226,7 +1244,7 @@ wss.on('connection', (ws, req) => {
       if (!a || a.state !== 'dead' || a.tagged) return;
       if (Math.hypot(a.x - p.x, a.z - p.z) > 6) return;     // must actually be there
       a.tagged = true; p.tags++;
-      if (isDefense(room)) { const bonus = Math.round(SP[a.sp].pts * .5 * (a.pred ? (1 + .35 * ((a.wave | 1) - 1)) : .25)); p.pts = (p.pts | 0) + bonus; p.ptsEarned = (p.ptsEarned | 0) + bonus; }
+      if (isDefense(room)) { const bonus = Math.round(SP[a.sp].pts * .4 * (a.pred ? (1 + .16 * ((a.wave | 1) - 1)) : .3)); p.pts = (p.pts | 0) + bonus; p.ptsEarned = (p.ptsEarned | 0) + bonus; }
       p.score += Math.round(SP[a.sp].pts * 0.15);
       send(ws, { t: 'tagged', id: a.id, tags: p.tags, score: p.score, pts: p.pts | 0 });
       broadcast(room, { t: 'feed', name: p.name, text: 'tagged a ' + a.sp }, p.id);
