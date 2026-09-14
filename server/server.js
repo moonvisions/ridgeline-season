@@ -807,6 +807,15 @@ function resolveShot(room, p, m) {
     if (zone && (!best || dist < best.dist)) best = { a, zone, dist };
   }
   if (!best) return { ok: true, hit: null };
+  if (best.a.pred && room.mode !== 'defense') {      // a roaming arena bear is worth real points
+    const a = best.a; a.hp -= best.zone === 'vital' || best.zone === 'head' ? 3 : 1.2;
+    if (a.hp > 0) return { ok: true, hit: { id: a.id, zone: best.zone, dist: best.dist, killed: false } };
+    a.state = 'dead'; a.deadT = 0; a.speed = 0;
+    const pts = Math.round(SP.bear.pts * 3 * (1 + best.dist / 100));
+    p.score += pts; p.kills++;
+    setTimeout(() => { if (rooms.has(room.name) && room.running) { room.animals = room.animals.filter(x => x.id !== a.id); const b = spawnPredator(room, 'bear', 1); b.roamer = true; b.cool = 12; room.animals.push(b); } }, 12000);
+    return { ok: true, hit: { id: a.id, zone: best.zone, dist: best.dist, killed: true, pts, species: 'bear' } };
+  }
   if (room.mode === 'defense') return { ok: true, hit: { a: best.a, zone: best.zone, dist: best.dist } };   // caller applies damage
   const { a, zone, dist } = best, s = SP[a.sp];
   const magnum = !!m.magnum;
@@ -936,6 +945,12 @@ function stepPredator(room, a, dt) {
   a.speed = 0; a.cool -= dt;
   if (a.cool > 0) return;
   a.cool = a.sp === 'lion' ? 1.35 : 1.7;
+  if (a.roamer) {                                    // arena bear: a scare and a scratch, never a kill
+    send(tgt.ws, { t: 'mauled', by: a.sp });
+    broadcast(room, { t: 'feed', name: tgt.name, text: 'got mauled by a bear' }, tgt.id);
+    a.retreatT = 3.5; a.heading += Math.PI; a.cool = 10 + Math.random() * 8;
+    return;
+  }
   tgt.hp -= Math.round(s.bite * (1 + .05 * (a.wave - 1)));
   send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp });
   if (tgt.hp <= 0 && !tgt.down) {
@@ -1146,6 +1161,10 @@ function startMatch(room) {
   room.running = true; room.time = 0; room.timeLeft = MATCH_SECONDS; room.animals = [];
   for (const p of room.players.values()) { p.score = 0; p.kills = 0; p.tags = 0; p.trophies = 0; p.longest = 0; }
   for (let i = 0; i < 18; i++) room.animals.push(spawnAnimal(room));
+  // Two bears wander the arena for the whole match. Not many — enough that the
+  // valley is never entirely safe, and enough that camping one clearing stops
+  // being the obvious play.
+  for (let i = 0; i < 2; i++) { const b = spawnPredator(room, 'bear', 1); b.roamer = true; b.cool = 6 + Math.random() * 8; room.animals.push(b); }
   broadcast(room, { t: 'start', seconds: MATCH_SECONDS, players: room.players.size });
   console.log(`[match] ${room.name} started with ${room.players.size}`);
 }
@@ -1277,6 +1296,7 @@ setInterval(() => {
     }
     if (room.running && !isDefense(room)) {
       room.time += dt; room.timeLeft -= dt;
+      for (const a of room.animals) if (a.pred) stepPredator(room, a, dt);
       for (const a of room.animals) updateAnimal(room, a, dt);
       for (const p of room.players.values()) if (p.bot) stepBot(room, p, dt);
       if (room.timeLeft <= 0) endMatch(room);
