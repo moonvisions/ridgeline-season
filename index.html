@@ -746,14 +746,6 @@
           <div><b>REVIVES</b><span>Stand by a fallen teammate</span></div>
         </div>
       </div>
-      <h2>Wave survival — solo</h2>
-      <div class="modeCard">
-        <div class="modeText">
-          <b>Endless waves</b>
-          <p id="survNote"></p>
-        </div>
-        <button id="survBtn" class="ghost">Wave mode</button>
-      </div>
       <h2>Solo challenges</h2>
       <p style="font-size:12px;color:var(--muted)">Short score attacks with their own leaderboards. No tags, no objectives, no bears — one number to beat. Sign in further down this tab to post scores.</p>
       <div class="shop" id="chalList"></div>
@@ -762,7 +754,7 @@
       <div id="cbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Loading…</div>
       <h2>This week's hunters</h2>
       <div class="tabs" style="margin-top:4px"><button data-lbs="1" class="on">This week</button><button data-lbs="0">All time</button></div>
-      <div class="tabs" style="margin-top:6px"><button data-lb="bestArena" class="on">Arena score</button><button data-lb="arenaWins">Arena wins</button><button data-lb="harvests">Harvests</button><button data-lb="campaignStars">Stars</button></div>
+      <div class="tabs" style="margin-top:6px"><button data-lb="bestArena" class="on">Arena score</button><button data-lb="bestWave">Ridge Defense</button><button data-lb="arenaWins">Arena wins</button><button data-lb="harvests">Harvests</button><button data-lb="campaignStars">Stars</button></div>
       <p id="lbSeason" style="font-size:12px;color:var(--gold);margin-top:8px"></p>
       <div id="lbOut" style="font-size:13px;margin-top:6px;min-height:20px;color:var(--muted)">Sign in to see where you stand.</div>
     </div>
@@ -1193,7 +1185,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'defense-v1';   // bump this whenever you change the policy
+const BUILD = 'defense-v4';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1687,7 +1679,7 @@ class WebSocketAdapter{
           for(const p of this._peers)this.map[p.id]=p;
           this.auth=!!m.authoritative; this.guest=!!m.guest; if(m.seconds)matchSeconds=m.seconds;
           if(!done){ done=true; clearTimeout(to); res({seed:m.seed>>>0,you:m.id,auth:this.auth,guest:this.guest}); } }
-        else if(m.t==='warmup'){ if(this.onEvent)this.onEvent({t:'warmup',seconds:m.seconds,players:m.players,defense:!!m.defense}); }
+        else if(m.t==='warmup'){ if(this.onEvent)this.onEvent({t:'warmup',seconds:m.seconds,players:m.players,defense:!!m.defense,team:m.team}); }
         else if(['wave','break','hp','down','revived','secondwind','over','bought'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
         else if(m.t==='start'){ if(this.onEvent)this.onEvent({t:'start',seconds:m.seconds,players:m.players}); }
         else if(m.t==='end'){ if(this.onEvent)this.onEvent({t:'end',board:m.board}); }
@@ -1825,7 +1817,7 @@ async function loadLeaderboard(){ if(!httpBase()){ setHtml('lbOut','Leaderboards
     if(j.season&&j.endsAt){ const hrs=Math.max(0,(j.endsAt-Date.now())/3600000);
       setTxt('lbSeason','Season '+j.seasonKey+' — resets in '+(hrs>48?Math.round(hrs/24)+' days':Math.round(hrs)+' hours')+'. Everyone starts level on Monday.'); }
     else setTxt('lbSeason','Every score ever posted.');
-    const lab={bestArena:'Best arena',arenaWins:'Wins',harvests:'Harvests',campaignStars:'Stars'}[j.by];
+    const lab={bestArena:'Best arena',arenaWins:'Wins',harvests:'Harvests',campaignStars:'Stars',bestWave:'Best wave'}[j.by]||j.by;
     setHtml('lbOut',j.rows.length?'<table style="width:100%;border-collapse:collapse">'+j.rows.map((r,i)=>`<tr style="${account&&r.name===account.name?'color:#ff6a13;font-weight:bold':''}"><td style="padding:3px 0;border-bottom:1px dashed #b8b39f">${i+1}. ${r.name}</td><td style="text-align:right;border-bottom:1px dashed #b8b39f">${r[j.by]} ${lab}</td></tr>`).join('')+'</table>':'No entries yet.'); }
   catch(e){ setHtml('lbOut','Could not load: '+e.message); } }
 function updateRivals(dt){ if(!NETA)return;
@@ -3007,7 +2999,36 @@ function drawDownedOverlay(){
   ctx.fillText('A teammate standing beside you for 3 seconds gets you up',cx,H*.36+30);
   ctx.restore();
 }
+function drawDefLobby(){
+  const secs=Math.ceil(warmup);
+  ctx.save(); ctx.textAlign='center'; ctx.shadowColor='rgba(0,0,0,.85)'; ctx.shadowBlur=12;
+  const y=H*.18;
+  ctx.font='bold 11px Courier New,monospace'; ctx.fillStyle='#ff4d3d';
+  ctx.fillText('RIDGE DEFENSE',cx,y-30);
+  ctx.font=`bold ${Math.min(96,W*.13)}px Georgia,serif`;
+  ctx.fillStyle=secs<=3?'#ff4d3d':'#f1ebdc';
+  ctx.fillText(secs,cx,y+52);
+  ctx.font='13px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.9)';
+  ctx.fillText('Wave 1 closes in',cx,y+76);
+  // the squad, named, with bots marked honestly
+  const live=[{name:(account&&account.name)||save.name||'You',you:true}]
+    .concat((rivals||[]).map(r=>({name:r.name,bot:/^(Dale|Marisol|Otis|Rennick|Sable|Hutch|Wren|Cobb)$/.test(r.name)})));
+  const team=live.length>1?live:(DEF.lobby&&DEF.lobby.length?DEF.lobby:live);
+  ctx.font='bold 11px Courier New,monospace'; ctx.fillStyle='rgba(241,235,220,.5)';
+  ctx.fillText('YOUR SQUAD',cx,y+108);
+  ctx.font='14px Trebuchet MS,sans-serif';
+  let ly=y+132;
+  for(const t of team.slice(0,6)){
+    ctx.fillStyle=t.you?'#ff6a13':(t.bot?'rgba(241,235,220,.55)':'#f1ebdc');
+    ctx.fillText((t.name||'Hunter')+(t.you?'  (you)':(t.bot?'  · lodge hand':'')),cx,ly);
+    ly+=21;
+  }
+  ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.5)';
+  ctx.fillText('Look around. Shots do not count yet.',cx,ly+10);
+  ctx.restore();
+}
 function drawWarmup(){
+  if(DEF.on){ drawDefLobby(); return; }
   const secs=Math.ceil(warmup);
   ctx.save(); ctx.textAlign='center'; ctx.shadowColor='rgba(0,0,0,.8)'; ctx.shadowBlur=10;
   const y=H*.26;
@@ -3301,15 +3322,12 @@ function renderLodge(){
   $('arenaBtn').disabled=!au; $('arenaBtn').style.opacity=au?1:.5;
   $('arenaOnlineBtn').disabled=!au; $('arenaOnlineBtn').style.opacity=au?1:.5;
   if($('pName'))$('pName').value=save.name||''; if($('pServer'))$('pServer').value=save.server||''; if($('pRoom'))$('pRoom').value=save.room||'';
-  const su=survUnlocked();
-  $('survNote').innerHTML=su?'Endless waves of boars and bears. No timer, no tags. Cash and XP bank after every cleared wave, so dying only costs the wave you are in.':'<b>Locked.</b> Complete hunt 4 (Silent Draw) to open wave mode.';
-  $('survBtn').disabled=!su; $('survBtn').style.opacity=su?1:.5;
 }
 function showTab(n){ ['Hunts','Shop','Chal','Career','Guide','Help'].forEach(k=>{ $('pane'+k).classList.toggle('on',k===n); $('tab'+k).classList.toggle('on',k===n); }); }
 let titleUp=true, paused=false, entryMode='in';
 let warmup=0, warmPlayers=0;   // arena warm-up: countdown before the round starts
 // Ridge Defense (co-op waves) — everything here is told to us by the server
-let DEF={on:false,phase:'',wave:0,left:0,secs:0,pts:0,max:100,down:false,team:[],shop:null,up:{}};
+let DEF={on:false,phase:'',wave:0,left:0,secs:0,pts:0,max:100,down:false,team:[],lobby:[],shop:null,up:{}};
 const LEGAL={
   privacy:{title:'Privacy',body:`
     <p><b>In one line:</b> play as a guest and nothing about you is stored anywhere. Make an
@@ -3696,7 +3714,7 @@ function renderDefShop(){
 async function startDefense(){
   const url=serverURL();
   if(!url){ setTxt('defStatus','Ridge Defense needs other people — it is online only.'); return; }
-  DEF={on:true,phase:'warm',wave:0,left:0,secs:0,pts:0,max:100,down:false,team:[],shop:null,up:{}};
+  DEF={on:true,phase:'warm',wave:0,left:0,secs:0,pts:0,max:100,down:false,team:[],lobby:[],shop:null,up:{}};
   setTxt('defStatus','Finding your team…');
   await startArena(true,'defense');
 }
@@ -3759,6 +3777,9 @@ function onNetEvent(ev){
     setHtml('eGoals',(ev.board||[]).map((b,i)=>`<div class="goal"><span class="s">${i+1}.</span> <b style="${NETA&&b.id===NETA.id?'color:#ff6a13':''}">${b.name}${b.bot?' <small style="color:var(--faint)">bot</small>':''}</b> — ${b.pts} pts <span style="color:var(--faint)">(${b.kills} shot, ${b.tags} tagged)</span></div>`).join(''));
     setTxt('endCash',''); setTxt('endXP',''); $('endScreen').classList.remove('hidden'); if(NETA){NETA.stop();NETA=null;} DEF.on=false; return; }
   if(ev.t==='warmup'){ warmup=ev.seconds||0; warmPlayers=ev.players||1; score=0;
+    if(ev.defense){ DEF.on=true; DEF.phase='warm'; DEF.lobby=(ev.team||[]).map(t=>({name:t.name,bot:t.bot,color:t.color,you:NETA&&t.id===NETA.id}));
+      warn={text:'HOLD THE RIDGE',t:2.6};
+      callout={text:'Squad forming',sub:'Wave one is bears. Stay together and watch each other.',c:'#ff4d3d',t:4}; return; }
     warn={text:'WARM-UP',t:2.5};
     callout={text:'Get your bearings',sub:'Have a look around — the round starts for everyone at once',c:'#7cff5a',t:4};
     return; }
@@ -3892,7 +3913,6 @@ $('tGuide').addEventListener('click',()=>{ audio(); showLodge(); showTab('Guide'
 $('tHelp').addEventListener('click',()=>{ audio(); showLodge(); showTab('Help'); });
 $('tabGuide').addEventListener('click',()=>showTab('Guide'));
 $('tabHelp').addEventListener('click',()=>showTab('Help'));
-$('survBtn').addEventListener('click',startSurvival);
 $('arenaBtn').addEventListener('click',()=>startArena(false));
 $('arenaOnlineBtn').addEventListener('click',()=>startArena(true));
 $('defBtn').addEventListener('click',()=>{ audio(); startDefense(); });
