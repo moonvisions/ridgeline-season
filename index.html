@@ -297,15 +297,37 @@
   .stat b{display:block;font-family:var(--disp);font-size:29px;color:#fff;line-height:1.05;letter-spacing:-.5px}
   .stat small{color:var(--faint);font-family:var(--type);font-size:9.5px;text-transform:uppercase;letter-spacing:1.6px}
 
-  .tabs{display:flex;gap:2px;margin-top:26px;overflow-x:auto;scrollbar-width:none;
-    border-bottom:1px solid var(--line)}
+  .tabs{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:26px;border:0}
   .tabs::-webkit-scrollbar{display:none}
-  .tabs button{margin:0;flex:0 0 auto;width:auto;padding:15px 20px 13px;font-family:var(--disp);font-size:13.5px;
-    font-weight:bold;letter-spacing:1.8px;text-transform:uppercase;cursor:pointer;
-    background:none;color:var(--faint);border:0;border-bottom:3px solid transparent;margin-bottom:-1px;
-    border-radius:0;box-shadow:none;transition:color .14s,border-color .14s,background .14s}
-  .tabs button:hover{color:#fff;background:rgba(255,255,255,.04)}
-  .tabs button.on{color:#fff;border-bottom-color:var(--blaze);background:linear-gradient(180deg,transparent,rgba(255,106,31,.14))}
+  .tabs button{position:relative;margin:0;width:auto;padding:16px 8px 14px;overflow:hidden;
+    font-family:var(--disp);font-size:13px;font-weight:bold;letter-spacing:1.4px;
+    text-transform:uppercase;cursor:pointer;color:#9fb0a1;
+    background:linear-gradient(180deg,rgba(34,45,36,.9),rgba(14,20,16,.92));
+    border:1px solid rgba(255,255,255,.10);border-radius:10px;
+    box-shadow:0 4px 0 rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+    transition:transform .13s cubic-bezier(.2,.9,.3,1.4),color .14s,border-color .14s,box-shadow .14s}
+  /* the orange cap that slides in when a tab is chosen */
+  .tabs button::before{content:"";position:absolute;left:12%;right:12%;top:0;height:3px;border-radius:0 0 3px 3px;
+    background:var(--blaze);transform:scaleX(0);transform-origin:50% 0;
+    transition:transform .22s cubic-bezier(.2,.9,.3,1.4);box-shadow:0 0 14px rgba(255,106,31,.8)}
+  .tabs button:hover{color:#fff;transform:translateY(-3px);border-color:rgba(255,106,31,.45);
+    box-shadow:0 7px 0 rgba(0,0,0,.45),0 12px 26px rgba(0,0,0,.45)}
+  .tabs button:hover::before{transform:scaleX(.6)}
+  .tabs button.on{color:#fff;border-color:var(--blaze);transform:translateY(-3px);
+    background:linear-gradient(180deg,rgba(255,106,31,.30),rgba(120,40,8,.30));
+    box-shadow:0 7px 0 #8f2c00,0 14px 30px rgba(255,84,0,.28)}
+  .tabs button.on::before{transform:scaleX(1)}
+  .tabs button:active{transform:translateY(1px);box-shadow:0 2px 0 rgba(0,0,0,.45)}
+  /* a slow sheen travels across whichever tab is open */
+  .tabs button.on::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.16) 48%,transparent 62%);
+    transform:translateX(-120%);animation:tabSheen 3.6s ease-in-out infinite}
+  @keyframes tabSheen{0%{transform:translateX(-120%)}55%{transform:translateX(120%)}100%{transform:translateX(120%)}}
+  /* the arena keeps a live green pip while anyone is out there */
+  .tabs button#tabChal.hot::after{content:"";position:absolute;top:7px;right:9px;width:7px;height:7px;
+    border-radius:50%;background:#7cff5a;animation:tabPip 1.8s infinite;transform:none;inset:auto 9px auto auto}
+  @keyframes tabPip{0%{box-shadow:0 0 0 0 rgba(124,255,90,.75)}70%{box-shadow:0 0 0 8px rgba(124,255,90,0)}100%{box-shadow:0 0 0 0 rgba(124,255,90,0)}}
+  @media (prefers-reduced-motion:reduce){ .tabs button.on::after{animation:none} }
   .pane{display:none}
   .pane.on{display:block}
 
@@ -499,7 +521,8 @@
     h1::after{width:74px;height:3px;margin-top:13px}
     h2{font-size:14px;margin:26px 0 10px}
     .pane > p:first-child{font-size:15px;margin-top:16px}
-    .tabs button{flex:0 0 auto;width:auto;padding:14px 14px 12px;font-size:12px;letter-spacing:1.3px}
+    .tabs{grid-template-columns:repeat(3,1fr);gap:7px}
+    .tabs button{padding:14px 4px 12px;font-size:11.5px;letter-spacing:.8px}
     .shop{grid-template-columns:1fr}
     .lvls{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
     .item small{min-height:0}
@@ -1125,7 +1148,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v10';   // bump this whenever you change the policy
+const BUILD = 'arena-v12';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1545,7 +1568,11 @@ function buildWorldInner(){
   buildCover();
 }
 function spawnAnimal(nearPlayer){
-  const sp=pickSpecies(); let x,z; const a=rnd(0,TAU), d=nearPlayer?rnd(35,95):rnd(60,140);
+  // Early hunts drop game closer: learning to read the country is hard enough
+  // without a two hundred metre walk between animals.
+  const id=(LV&&LV.id)||1;
+  const close = mode!=='hunt' ? [35,95] : id<=3?[22,62] : id<=6?[26,75] : id<=10?[30,90] : [35,105];
+  const sp=pickSpecies(); let x,z; const a=rnd(0,TAU), d=nearPlayer?rnd(close[0],close[1]):rnd(60,140);
   x=P.x+Math.sin(a)*d; z=P.z+Math.cos(a)*d; const dd=Math.hypot(x,z); if(dd>MAP_R-10){ x*= (MAP_R-10)/dd; z*=(MAP_R-10)/dd; }
   return {sp,x,z,heading:rnd(0,TAU),speed:0,state:'graze',t:rnd(2,6)/Math.max(1,animalPace()),phase:RNG()*TAU,dip:0,male:sp==='deer'?RNG()<.5:true,
           wounded:false,deadT:0,hp:SP[sp].hp*DF.hp,alert:0,bleedT:0,faceDir:1,lastHit:null,trophy:false,tagged:false,hurtT:0};
@@ -1773,6 +1800,7 @@ let weapon='rifle', zoom=1, scoped=false, breath=4, breathHold=false, ammo=5, ar
 let score=0, cashDay=0, timeLeft=120, DAY=120, time=0, wind={dir:0,str:1}, keys={}, mv={x:0,y:0}, sprint=false;
 let stats, goalDone=[false,false,false], floaters=[], callout=null, hitMark=0, warn=null, stepT=0, dying=false, deathT=0;
 let swayY=0, swayP=0, f=1, horizonY=0, cx=0, tod=0, detection=0, nextBear=0, fogDay=1, chargingBear=null;
+let bearGap=9e9;
 let tracks=[], dirt=[], account=null, remoteAnimals=new Map(), arenaAuth=false, matchSeconds=180, killFeed=[], streak=0, streakT=0, arenaSeed=0, arenaOnline=false, rivals=[], arenaEnded=false, joyVec={x:0,y:0}, hurtFlash=0, CHAL=null, chalScore=0, legendSighted=null, quiverFullMsg=0, autoRun=false, sawFirstBear=false, bearsLeft=0, mode='hunt', health=100, lastHurt=0, wave=0, waveT=0, waveClear=false, waveKills=0, smSpeed=0, runLatch=false;
 const LEVELS=[
  {id:1,rg:'Pine Hollow',biome:'pine',name:'First Light',t:60,tags:['deer'],fog:.8,hard:0,cash:80,xp:200,bears:0,
@@ -1868,7 +1896,7 @@ function bearSpawnDist(){ const a=bearAggro(); return [lerp(95,60,(a-.55)/.95), 
 function starsFor(id){ return save.stars[id]||0; }
 function totalStars(){ return LEVELS.reduce((a,l)=>a+starsFor(l.id),0); }
 function unlocked(l){ const i=LEVELS.indexOf(l); if(i<=0)return true; return starsFor(LEVELS[i-1].id)>0; }
-function survUnlocked(){ return starsFor(4)>0; }
+function survUnlocked(){ return starsFor(1)>0||save.tutorialDone; }
 function liveStats(){ const k=stats.kills||{}; return {...stats, total:Object.values(k).reduce((a,b)=>a+b,0), variety:Object.keys(k).length}; }
 
 function magSize(){ return upg('mag')?8:5; }
@@ -1884,7 +1912,12 @@ function resetDay(worldSeed){
   buildWorld(worldSeed); DAY=LV?LV.t:120; score=0; cashDay=0; timeLeft=DAY; time=0; wind={dir:rnd(0,TAU),str:rnd(.6,1.4)};
   TSEED=Math.random()*100;
   TAMP=(mode==='arena'||mode==='chal')?0:(TERR_AMP[(LV&&LV.biome)||'pine']||6);
-  WX=pickWeather(); seedPrecip(); fogDay=(LV?LV.fog:1)*WX.fog; nextBear=(LV&&LV.bears)?rnd(20,40):9e9; bearsLeft=LV?LV.bears:0; chargingBear=null;
+  WX=pickWeather(); seedPrecip(); fogDay=(LV?LV.fog:1)*WX.fog;
+  bearsLeft=LV?LV.bears:0;
+  // first one early enough that the last one still has time to reach you
+  nextBear=bearsLeft?rnd(8,16):9e9;
+  bearGap=bearsLeft?Math.max(9,(DAY-18)/bearsLeft):9e9;
+  chargingBear=null;
   if(LV&&LV.bowOnly)weapon='bow';
   if(COND&&COND.id==='quiet')weapon='bow';
   stats={shots:0,hits:0,kills:{},wounded:0,bowKills:0,maxDist:0,minDist:999,bigVital:0,trophies:0,dmgTaken:0,far90:0,untagged:0}; floaters=[]; callout=null; hitMark=0; warn=null; dying=false; deathT=0;
@@ -2955,7 +2988,7 @@ function frame(now){
     if(!dying)updatePlayer(dt); else deathT+=dt;
     wind.dir+=Math.sin(time*.05)*dt*.05;
     if(mode==='hunt'&&!dying&&time>nextBear&&bearsLeft>0){ bearsLeft--;
-      const ag=bearAggro(); nextBear=time+lerp(46,22,(ag-.55)/.95)+rnd(0,10);
+      nextBear=time+bearGap*rnd(.8,1.15);
       const b=spawnAnimal(false); b.sp='bear'; b.hp=SP.bear.hp*DF.hp; b.male=true;
       const [dmin,dmax]=bearSpawnDist(), ang=rnd(0,TAU), d=rnd(dmin,dmax);
       b.x=P.x+Math.sin(ang)*d; b.z=P.z+Math.cos(ang)*d;
@@ -3567,8 +3600,8 @@ function startDay(){ sendEvent('hunt_start',{hunt:lvlSel}); if(document.activeEl
   $('lodge').classList.add('hidden'); $('endScreen').classList.add('hidden'); tryLock();
   if(COND){ warn={text:COND.name.toUpperCase(),t:3.2}; callout={text:COND.name,sub:COND.desc,c:'#e0b45a',t:5}; } }
 function startSurvival(){ if(!survUnlocked())return; if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=null; mode='surv'; audio(); resetDay(); animals=[]; fogDay=1; running=true; $('lodge').classList.add('hidden'); tryLock(); waveClear=true; waveT=3; warn={text:'Get ready',t:3}; }
-const ARENA_HUNT=4;
-function arenaUnlocked(){ return starsFor(ARENA_HUNT)>0; }
+const ARENA_HUNT=1;   // one hunt under your belt, then the arena is yours
+function arenaUnlocked(){ return starsFor(ARENA_HUNT)>0||save.tutorialDone; }
 async function startArena(online){
   if(!arenaUnlocked())return;
   const nameEl=$('pName'), srvEl=$('pServer'), roomEl=$('pRoom');
