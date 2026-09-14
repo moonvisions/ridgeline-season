@@ -784,7 +784,11 @@ function resolveShot(room, p, m) {
   p.lastShot = now;
   // Where the client says it fired from must agree with where the server has seen it.
   const cx = +m.x, cz = +m.z;
-  if (!Number.isFinite(cx) || !Number.isFinite(cz) || Math.hypot(cx - p.x, cz - p.z) > 8) return { ok: false, why: 'position mismatch' };
+  if (!Number.isFinite(cx) || !Number.isFinite(cz)) return { ok: false, why: 'bad position' };
+  if (Math.hypot(cx - p.x, cz - p.z) > 8) {
+    p.x = cx; p.z = cz; p.drift = 0;          // trust it once, so one hiccup does not cost a whole match
+    return { ok: false, why: 'catching up — try that again' };
+  }
   const yaw = +m.yaw, pitch = Math.max(-.7, Math.min(.7, +m.pitch || 0));
   if (!Number.isFinite(yaw)) return { ok: false, why: 'bad aim' };
   spook(room, p.x, p.z, weapon === 'bow' ? 14 : 150);
@@ -1234,8 +1238,22 @@ wss.on('connection', (ws, req) => {
       // for network jitter. The old 6.5 limit was BELOW sprint speed, so anyone
       // running online was pulled backwards and their shots were rejected as
       // position mismatches. It still stops teleporting.
-      const dx = nx - p.x, dz = nz - p.z, dist = Math.hypot(dx, dz), maxD = 10 * dt + 1.2;
-      if (dist > maxD) { p.x += dx / dist * maxD; p.z += dz / dist * maxD; } else { p.x = nx; p.z = nz; }
+      // The first report from a player IS their spawn — take it as given. Until
+      // this existed the server kept everyone at the origin and crawled toward
+      // wherever they actually were, rejecting every shot as a position
+      // mismatch on the way. That looked, from the player's side, like bullets
+      // passing straight through animals.
+      if (!p.synced) { p.synced = true; p.x = nx; p.z = nz; }
+      else {
+        const dx = nx - p.x, dz = nz - p.z, dist = Math.hypot(dx, dz), maxD = 10 * dt + 1.2;
+        if (dist > maxD) {
+          p.x += dx / dist * maxD; p.z += dz / dist * maxD;
+          // Persistent disagreement means something is out of step rather than
+          // someone cheating — resync instead of refusing their shots forever.
+          p.drift = (p.drift || 0) + 1;
+          if (p.drift > 45) { p.x = nx; p.z = nz; p.drift = 0; }
+        } else { p.x = nx; p.z = nz; p.drift = 0; }
+      }
       const rr = Math.hypot(p.x, p.z); if (rr > MAP_R) { p.x *= MAP_R / rr; p.z *= MAP_R / rr; }
       p.yaw = +m.yaw || 0; p.firing = m.firing ? 1 : 0;
       return;
