@@ -888,7 +888,7 @@
     <div class="pane" id="paneHelp">
       <h2>How to hunt</h2>
       <div class="ctl" id="ctlMouse">
-        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows to move · <b>hold <kbd>Shift</kbd> to run</b> · <kbd>E</kbd> toggles auto-run (then Shift walks)<br>
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows to move · <b>you run by default</b> — tap <kbd>E</kbd> if you would rather hold <kbd>Shift</kbd> to run instead. Holding Shift for long stretches makes Windows chime at you, so running is the default here<br>
         <b>Stand still to disappear.</b> An animal is far less likely to notice you when you are not moving, and your aim settles too. Running is the loudest and most visible thing you can do.<br>
         <b>Look:</b> move the mouse. Click once to lock the mouse for smooth 360° spinning. <b>If your browser won't lock it, you can still turn all the way around</b> with <kbd>←</kbd><kbd>→</kbd> or by pushing the cursor against the left/right edge of the screen.<br>
         <b>Left-click</b> fires · <b>Right-click</b> or <kbd>F</kbd> raises the scope (a tap, not a hold) · <kbd>Space</kbd> holds your breath while scoped · <kbd>R</kbd> reloads · <b>Middle-click</b>, the <b>wheel</b> or <kbd>Q</kbd> swaps rifle and bow · <kbd>K</kbd> hides the on-screen controls · <kbd>Esc</kbd> pauses
@@ -1236,7 +1236,7 @@ function sfxCall(a,alarm){
 const sfxClick=(w,p)=>tone(p,0.06,0.15,'square',w);
 
 // ---------- save / upgrades ----------
-const SAVE0=()=>({cash:0,xp:0,best:0,up:{scope:0,rifle:0,mag:0,lungs:0,bow:0,camo:0,scent:0,boots:0,quiver:0},stars:{},tot:{kills:0,bowKills:0,bears:0,longest:0,species:{},bestWave:0,trophies:0,perfect:0,hunts:0,arenaWins:0,bestArena:0},badges:{},name:'',server:'',room:'',token:'',controls:'auto',autoRun:false,skills:{marks:0,arch:0,stealth:0,track:0},inv:{},provisions:0,chalBest:{},log:{},records:{longest:0,bestSingle:0,bestDay:0},legends:{},contracts:null,contractsDone:0,vol:0.85,hideKeys:false,tutorialDone:false,lefty:false,btnSize:'normal',hudScale:'normal'});
+const SAVE0=()=>({cash:0,xp:0,best:0,up:{scope:0,rifle:0,mag:0,lungs:0,bow:0,camo:0,scent:0,boots:0,quiver:0},stars:{},tot:{kills:0,bowKills:0,bears:0,longest:0,species:{},bestWave:0,trophies:0,perfect:0,hunts:0,arenaWins:0,bestArena:0},badges:{},name:'',server:'',room:'',token:'',controls:'auto',autoRun:true,skills:{marks:0,arch:0,stealth:0,track:0},inv:{},provisions:0,chalBest:{},log:{},records:{longest:0,bestSingle:0,bestDay:0},legends:{},contracts:null,contractsDone:0,vol:0.85,hideKeys:false,tutorialDone:false,lefty:false,btnSize:'normal',hudScale:'normal'});
 let save=SAVE0();
 let hadLocalSave=false;
 try{ const s=localStorage.getItem('ridgeline2'); if(s){ hadLocalSave=true; const o=JSON.parse(s); save={...save,...o,up:{...save.up,...(o.up||{})},stars:{...(o.stars||{})},tot:{...save.tot,...(o.tot||{}),species:{...((o.tot||{}).species||{})}},badges:{...(o.badges||{})}};
@@ -1259,7 +1259,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'stable-v1';   // bump this whenever you change the policy
+const BUILD = 'arena-alive-v1';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1754,7 +1754,7 @@ class WebSocketAdapter{
           this.auth=!!m.authoritative; this.guest=!!m.guest; if(m.seconds)matchSeconds=m.seconds;
           if(!done){ done=true; clearTimeout(to); res({seed:m.seed>>>0,you:m.id,auth:this.auth,guest:this.guest}); } }
         else if(m.t==='warmup'){ if(this.onEvent)this.onEvent({t:'warmup',seconds:m.seconds,players:m.players,defense:!!m.defense,team:m.team}); }
-        else if(['wave','break','hp','down','revived','secondwind','over','bought'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
+        else if(['wave','break','hp','down','revived','secondwind','over','bought','respawn','mauledDown','eliminated'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
         else if(m.t==='start'){ if(this.onEvent)this.onEvent({t:'start',seconds:m.seconds,players:m.players}); }
         else if(m.t==='end'){ if(this.onEvent)this.onEvent({t:'end',board:m.board}); }
         else if(m.t==='shotResult'){ if(this.onEvent)this.onEvent({t:'shotResult',...m}); }
@@ -1768,6 +1768,8 @@ class WebSocketAdapter{
           if(m.mode==='defense'){ DEF.phase=m.phase; DEF.wave=m.wave|0; DEF.left=m.predsLeft|0; DEF.secs=m.seconds||0;
             const me=(m.players||[]).find(q=>q.id===this.id); if(me){ DEF.pts=me.pts|0; DEF.max=me.max||100; if(!DEF.down)health=me.hp; DEF.down=!!me.down; }
             DEF.team=(m.players||[]).filter(q=>q.id!==this.id).map(q=>({name:(this._peers.find(x=>x.id===q.id)||{}).name||'',hp:q.hp,max:q.max,down:q.down,bot:q.bot})); }
+          if(m.mode!=='defense'){ const meA=(m.players||[]).find(q=>q.id===this.id);
+            if(meA){ ARENA.lives=meA.lives==null?3:meA.lives; ARENA.out=!!meA.out; ARENA.dead=(meA.hp<=0)&&!meA.out; if(!ARENA.dead&&!ARENA.out&&meA.hp)health=meA.hp; } }
           if(m.phase==='warm'){ warmup=Math.max(0,m.seconds||0); } else { warmup=0; if(typeof m.seconds==='number'&&m.mode!=='defense')timeLeft=m.seconds; } }
         else if(m.t==='kill'&&m.id!==this.id&&this.onEvent)this.onEvent({t:'kill',name:m.name,species:m.species,points:m.points});
         else if(m.t==='tagged'&&this.onEvent)this.onEvent({t:'tagged',tags:m.tags,score:m.score});
@@ -2041,7 +2043,7 @@ function resetDay(worldSeed){
   if(LV&&LV.bowOnly)weapon='bow';
   if(COND&&COND.id==='quiet')weapon='bow';
   stats={shots:0,hits:0,kills:{},wounded:0,bowKills:0,maxDist:0,minDist:999,bigVital:0,trophies:0,dmgTaken:0,far90:0,untagged:0}; floaters=[]; callout=null; hitMark=0; warn=null; dying=false; deathT=0;
-  autoRun=!!save.autoRun; goalDone=[false,false,false]; sawFirstBear=false; killFeed=[]; streak=0; streakT=0; DF=difficulty(); particles=[]; health=100; lastHurt=99; wave=0; waveT=0; waveClear=false; waveKills=0;
+  autoRun=(save.autoRun===undefined?true:!!save.autoRun); goalDone=[false,false,false]; sawFirstBear=false; killFeed=[]; streak=0; streakT=0; DF=difficulty(); particles=[]; health=100; lastHurt=99; wave=0; waveT=0; waveClear=false; waveKills=0;
   // Conditions are applied last, after difficulty and the world are settled, so
   // nothing downstream overwrites them.
   COND=(mode==='hunt'&&LV)?conditionFor(LV.id):null;
@@ -2494,6 +2496,7 @@ function applyHit(a,zone,d,p){
 }
 function fire(){
   if(DEF.on&&DEF.down)return;
+  if(mode==='arena'&&(ARENA.dead||ARENA.out))return;
   if(!running||dying||reloading>0)return;
   if(arenaAuth&&NETA){
     if(weapon==='rifle'){ if(ammo<=0){ sfxClick(0,1400); return; } ammo--; sfxShot(); flash=.08; recoil=1;
@@ -2673,6 +2676,7 @@ function onKeyDown(e){
   lastKeySeen=names.join('/')+' ('+(e.key||'?')+')';
   const has=c=>names.includes(c);
   if(has('ArrowUp')||has('ArrowDown')||has('ArrowLeft')||has('ArrowRight')||has('Space'))e.preventDefault();
+  if(has('ShiftLeft')||has('ShiftRight')){ if(e.preventDefault)e.preventDefault(); }
   if(has('Escape')){ if(!repeat){ if(paused)resumeGame(); else if(canPause())pauseGame(); } return; }
   if(paused)return;
   if(!running)return;
@@ -2733,6 +2737,7 @@ function updatePlayer(dt){
   if(turnKeys||edgeTurn) P.yaw += (turnKeys*1.9 + edgeTurn*2.4) * dt / Math.max(1,zoom*0.5);
   let spd=0;
   if(DEF.on&&DEF.down)mag=0;
+  if(mode==='arena'&&(ARENA.dead||ARENA.out))mag=0;
   if(mag>0.05){ const tired=clamp(P.stamina/25,0,1); let want=(sprint&&P.stamina>0?lerp(5.6,8.4,tired):4.3);
     if(TAMP>0){ const sl=terrSlope(P.x,P.z,Math.sin(P.yaw+Math.atan2(mv.x,mv.y)),Math.cos(P.yaw+Math.atan2(mv.x,mv.y)));
       want*=clamp(1-sl*.55,.62,1.16); }
@@ -2979,7 +2984,12 @@ function drawHUD(){
       ctx.fillStyle=tm.down?'#ff4d3d':'#7cff5a'; ctx.fillRect(hx+92,ty-8,54*Math.max(0,Math.min(1,(tm.hp||0)/(tm.max||100))),6);
       ty+=15; }
     ctx.font=`bold ${fs}px Georgia,serif`; ctx.fillStyle='#f1ebdc'; }
-  else if(mode==='arena'){ ctx.fillText(m+':'+(s<10?'0':'')+s,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillText('Open arena',hx,fs+32); }
+  else if(mode==='arena'){ ctx.fillText(m+':'+(s<10?'0':'')+s,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif';
+    ctx.fillText('Open arena',hx,fs+32);
+    if(arenaAuth){ const lv=ARENA.out?0:ARENA.lives;
+      ctx.font='bold 12px Trebuchet MS,sans-serif';
+      ctx.fillStyle=ARENA.out?'#ff4d3d':lv===1?'#ff9a63':'rgba(241,235,220,.9)';
+      ctx.fillText(ARENA.out?'OUT OF THE MATCH':('●'.repeat(lv)+'○'.repeat(Math.max(0,3-lv))+'  '+lv+' li'+(lv===1?'fe':'ves')),hx,fs+50); } }
   else if(mode==='surv'){ ctx.fillText('Wave '+wave,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif'; const alive=animals.filter(a=>a.state!=='dead'&&a.state!=='gone').length; ctx.fillText(waveClear?('Next wave in '+Math.ceil(waveT)+' s'):(alive+' left  ·  '+waveKills+' kills'),hx,fs+32); }
   else { ctx.fillText(m+':'+(s<10?'0':'')+s,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif';
     ctx.fillText((LV?'Hunt '+LV.id+' · '+LV.name:'')+(tod>.8?' · light fading':''),hx,fs+32);
@@ -3014,7 +3024,7 @@ function drawHUD(){
   // stamina
   ctx.fillStyle='rgba(255,255,255,.2)'; ctx.fillRect(ax,ay+6,110,5); ctx.fillStyle=P.stamina<35?'#e05a3a':'#7cff5a'; ctx.fillRect(ax,ay+6,110*P.stamina/100,5);
   ctx.font='11px Trebuchet MS,sans-serif';
-  const running_=sprint&&P.speed>4.7, gait=running_?'RUNNING':P.speed<0.1?'Still — hardest to spot':'Walking';
+  const running_=sprint&&P.speed>4.7, gait=running_?'RUNNING':P.speed<0.1?(W<420?'STILL':'Still — hardest to spot'):'Walking';
   ctx.fillStyle=P.stamina<20?'#ff8c3b':running_?'#7cff5a':'rgba(241,235,220,.8)';
   ctx.fillText(gait+(P.stamina<20?' · out of breath':P.stamina<50?' · winded':'')+(autoRun?' · auto-run':''),ax+118,ay+11);
 
@@ -3057,6 +3067,15 @@ function drawHUD(){
     ctx.fillText('press K to hide',16,H-12); }
   if(warmup>0)drawWarmup();
   drawDownedOverlay();
+  if(mode==='arena'&&(ARENA.dead||ARENA.out)){
+    ctx.save(); ctx.fillStyle=ARENA.out?'rgba(60,0,0,.45)':'rgba(120,0,0,.3)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.shadowColor='rgba(0,0,0,.85)'; ctx.shadowBlur=12;
+    ctx.font=`bold ${Math.min(62,W*.095)}px Georgia,serif`; ctx.fillStyle='#ff4d3d';
+    ctx.fillText(ARENA.out?'OUT':'DOWN',cx,H*.34);
+    ctx.font='15px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.92)';
+    ctx.fillText(ARENA.out?'Three lives gone. Watching until the match ends.'
+      :(ARENA.lives+' li'+(ARENA.lives===1?'fe':'ves')+' left — back in a moment'),cx,H*.34+30);
+    ctx.restore(); }
   drawControls();
   drawTutorial();
   if(mode==='arena')drawMinimap();
@@ -3404,6 +3423,7 @@ function showTab(n){ ['Hunts','Shop','Chal','Career','Guide','Help'].forEach(k=>
 let titleUp=true, paused=false, entryMode='in';
 let warmup=0, warmPlayers=0;   // arena warm-up: countdown before the round starts
 // Ridge Defense (co-op waves) — everything here is told to us by the server
+let ARENA={lives:3,out:false,dead:false,deadT:0};
 let DEF={on:false,phase:'',wave:0,left:0,secs:0,pts:0,max:100,down:false,team:[],lobby:[],shop:null,up:{}};
 const LEGAL={
   privacy:{title:'Privacy',body:`
@@ -3845,6 +3865,15 @@ function onNetEvent(ev){
     callout={text:ev.late?'You arrived mid-wave':(ev.bears+' bear'+(ev.bears===1?'':'s')+(ev.lions?' · '+ev.lions+' lion'+(ev.lions===1?'':'s'):'')),sub:'Hold the valley together',c:'#ff6a13',t:3.5}; return; }
   if(ev.t==='break'){ DEF.phase='break'; DEF.shop=ev.shop; DEF.secs=ev.seconds; warn={text:'WAVE '+ev.wave+' CLEARED',t:2.4};
     tone(660,.2,.2,'triangle'); tone(990,.35,.2,'triangle',.14); openDefShop(); return; }
+  if(ev.t==='mauledDown'){ if(NETA&&ev.id===NETA.id){ ARENA.dead=true; ARENA.lives=ev.lives; health=0;
+      callout={text:'THE '+String(ev.by||'bear').toUpperCase()+' GOT YOU',sub:ev.lives+' li'+(ev.lives===1?'fe':'ves')+' left — back on your feet in a moment',c:'#ff4d3d',t:4}; sfxRoar(); }
+    else pushFeed(ev.name+' was put down by a '+ev.by,'','#ff9a63'); return; }
+  if(ev.t==='respawn'){ ARENA.dead=false; health=ev.hp; ARENA.lives=ev.lives;
+    P.x=ev.x; P.z=ev.z; if(NETA&&NETA.emit)NETA.emit({t:'state',x:P.x,z:P.z,yaw:P.yaw,score:score,kills:0,firing:false});
+    callout={text:'Back in it',sub:ARENA.lives+' li'+(ARENA.lives===1?'fe':'ves')+' left · fresh country',c:'#7cff5a',t:3}; return; }
+  if(ev.t==='eliminated'){ if(NETA&&ev.id===NETA.id){ ARENA.out=true; ARENA.dead=false; health=0;
+      callout={text:'YOU ARE OUT',sub:'Three lives gone. Watch the rest of the match.',c:'#ff4d3d',t:8}; }
+    else pushFeed(ev.name+' is out of the match','','#ff4d3d'); return; }
   if(ev.t==='mauled'){ hurtFlash=1; lastHurt=0; sfxRoar();
     callout={text:'MAULED',sub:'A bear caught you out here — move, and watch your back',c:'#ff4d3d',t:3};
     warn={text:'BEAR',t:1.8}; return; }
@@ -3867,7 +3896,7 @@ function onNetEvent(ev){
     warn={text:'WARM-UP',t:2.5};
     callout={text:'Get your bearings',sub:'Have a look around — the round starts for everyone at once',c:'#7cff5a',t:4};
     return; }
-  if(ev.t==='start'){ warmup=0; timeLeft=ev.seconds; score=0; stats.kills={}; stats.shots=0; stats.hits=0; arenaEnded=false; running=true; warn={text:'GO',t:2}; tone(880,.18,.2,'triangle'); tone(1320,.3,.2,'triangle',.12); return; }
+  if(ev.t==='start'){ warmup=0; timeLeft=ev.seconds; score=0; stats.kills={}; stats.shots=0; stats.hits=0; ARENA={lives:3,out:false,dead:false,deadT:0}; arenaEnded=false; running=true; warn={text:'GO',t:2}; tone(880,.18,.2,'triangle'); tone(1320,.3,.2,'triangle',.12); return; }
   if(ev.t==='end'){ endArena(ev.board); return; }
   if(ev.t==='error'){ callout={text:ev.message||'Server error',sub:'',c:'#ff3b1f',t:3}; return; }
   if(ev.t==='tagged'){ score=ev.score; pushFeed('Tagged — '+ev.tags+' this match','','#7cff5a'); return; }
