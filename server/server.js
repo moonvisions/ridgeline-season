@@ -73,8 +73,8 @@ function load() {
       if (bk) {
         try { DB = Object.assign(DB, JSON.parse(fs.readFileSync(bk, 'utf8'))); migrate(); console.warn(`[data] data.json was missing — restored ${Object.keys(DB.users).length} accounts from ${path.basename(bk)}`); }
         catch (e2) { console.error('[data] backup restore failed', e2); }
-      } else console.log('[data] fresh start — no accounts yet');
-    } else console.error('[data] load failed', e);
+      } else { migrate(); console.log(`[data] fresh start — no accounts yet (schema v${DB.schema})`); }
+    } else { console.error('[data] load failed', e); migrate(); }
   }
 }
 // Every version of this file can read every older data.json. New fields get
@@ -154,7 +154,7 @@ function newUser(name, pw) {
     name, salt, hash, created: Date.now(),
     recSalt: rec.salt, recHash: rec.hash, recovery,   // recovery is stripped before storing
     premium: false, premiumSince: 0,
-    stats: { harvests: 0, bears: 0, trophies: 0, longest: 0, arenaMatches: 0, arenaWins: 0, bestArena: 0, arenaKills: 0, campaignStars: 0, rank: 0, chalLong: 0, chalKills: 0, chalTags: 0 },
+    stats: { harvests: 0, bears: 0, trophies: 0, longest: 0, arenaMatches: 0, arenaWins: 0, bestArena: 0, arenaKills: 0, campaignStars: 0, rank: 0, chalLong: 0, chalKills: 0, chalTags: 0, bestWave: 0 },
     cloud: null,          // client's campaign save, backed up here
   };
 }
@@ -669,7 +669,7 @@ const server = http.createServer(async (req, res) => {
         rows = Object.values(DB.users).map(u => { const sn = ensureSeason(u); return { name: u.name, [key]: sn[sk] | 0 }; })
           .filter(r => r[key] > 0).sort((a, b) => b[key] - a[key]).slice(0, 25);
       } else {
-        rows = Object.values(DB.users).map(publicStats).sort((a, b) => b[key] - a[key]).slice(0, 25);
+        rows = Object.values(DB.users).map(publicStats).map(r => ({ ...r, [key]: r[key] | 0 })).sort((a, b) => b[key] - a[key]).slice(0, 25);
       }
       return json(res, 200, { by: key, season: thisWeek, seasonKey: seasonKey(), endsAt: seasonEndsAt(), rows });
     }
@@ -841,7 +841,7 @@ function resolveShot(room, p, m) {
 // that come straight for them. Kills and tags earn points; between waves the
 // points buy gear. Everyone down at once and the run is over. Runs on the
 // server so every player fights the same animals at the same moment.
-const DEF_WARMUP = 12, DEF_BREAK = 16, DEF_MAX = 6;
+const DEF_WARMUP = 12, DEF_BREAK = 7, DEF_MAX = 6;   // a breath between waves, not a shopping trip
 const SHOP = {
   ammo:   { name: 'Resupply',          cost: w => 90 + 10 * w,    max: 99, desc: 'Full magazine and quiver' },
   damage: { name: 'Heavier loads',     cost: w => 540 + 160 * w,  max: 5,  desc: '+25% damage per level' },
@@ -888,7 +888,10 @@ function waveRoster(n, players) {
 }
 function defStartWave(room) {
   room.wave++; room.phase = 'wave'; room.running = true;
-  const r = waveRoster(room.wave, realCount(room) + [...room.players.values()].filter(p => p.bot).length * .5);
+  // Bots fight, but badly on purpose — they are worth about a third of a person
+  // when sizing a wave, or a lobby full of them makes solo play harder than
+  // being genuinely alone.
+  const r = waveRoster(room.wave, realCount(room) + [...room.players.values()].filter(p => p.bot).length * .3);
   room.animals = room.animals.filter(a => !a.pred);
   for (let i = 0; i < r.bears; i++) room.animals.push(spawnPredator(room, 'bear', room.wave));
   for (let i = 0; i < r.lions; i++) room.animals.push(spawnPredator(room, 'lion', room.wave));
@@ -1146,7 +1149,7 @@ function getRoom(name) {
 }
 function send(ws, o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 function broadcast(room, o, except) { const m = JSON.stringify(o); for (const p of room.players.values()) if (p.id !== except && p.ws && p.ws.readyState === 1) p.ws.send(m); }
-const WARMUP_SECONDS = 15;
+const WARMUP_SECONDS = 12;   // same wait as Ridge Defense, so both modes feel alike
 // A match should not begin the instant you arrive. Everyone gets a warm-up:
 // you are in the world, you can move and look around and watch the others
 // turn up, and a shared countdown starts the round for all of you at once.
