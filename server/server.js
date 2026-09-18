@@ -45,7 +45,7 @@ const ORIGIN = process.env.ORIGIN || '*';          // set to your site in produc
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v4';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v5';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -949,7 +949,7 @@ function spawnPredator(room, sp, wave) {
   const a = Math.random() * TAU, d = (room.mode === 'defense' ? 85 : 45) + Math.random() * 55;   // arena: close enough to matter
   const hpMul = 1 + 0.16 * (wave - 1), spMul = Math.min(1.35, 1 + 0.035 * (wave - 1));
   let px = c.x + Math.sin(a) * d, pz = c.z + Math.cos(a) * d; const rr = Math.hypot(px, pz); if (rr > MAP_R - 10) { px *= (MAP_R - 10) / rr; pz *= (MAP_R - 10) / rr; }
-  return { id: room.nextAid++, sp, x: px, z: pz, heading: a + Math.PI,
+  return { id: animalId++, sp, x: px, z: pz, heading: a + Math.PI,
     speed: 0, state: 'stalk', t: 0, hp: s.hp * hpMul, hpMax: s.hp * hpMul, spMul,
     pred: true, wave, cool: 1.5 + Math.random(), retreatT: 0, tagged: false, trophy: false, wounded: false };
 }
@@ -1033,7 +1033,7 @@ function stepPredator(room, a, dt) {
     // Arena predators hunt people, not the lodge's stand-ins, and they spread
     // out: every hunter in the match has something coming for them, not just
     // whoever happens to be nearest the spawn ring.
-    const humans = [...room.players.values()].filter(p => !p.bot && !p.down && !p.out && p.hp > 0);
+    const humans = [...room.players.values()].filter(p => !p.bot && !p.gone && !p.down && !p.out && p.hp > 0);
     if (humans.length) {
       tgt = humans.find(p => p.id === a.tgtId) || null;
       a.retarget = (a.retarget || 0) - dt;
@@ -1047,7 +1047,7 @@ function stepPredator(room, a, dt) {
     }
   } else {
     for (const p of room.players.values()) {
-      if (p.down || p.out || p.hp <= 0) continue;
+      if (p.down || p.out || p.hp <= 0 || p.gone) continue;
       const d = dist(p); if (d < bd) { bd = d; tgt = p; }
     }
   }
@@ -1177,7 +1177,7 @@ function adminOk(given) {
 const BOT_NAMES = ['Dale', 'Marisol', 'Otis', 'Rennick', 'Sable', 'Hutch', 'Wren', 'Cobb'];
 const BOT_COLORS = ['#e2542b', '#2b7fe2', '#8e2be2', '#e2c02b', '#2be29a', '#e22b7f'];
 const MIN_PARTICIPANTS = 4;           // a match should never feel empty
-function realCount(room) { let n = 0; for (const p of room.players.values()) if (!p.bot) n++; return n; }
+function realCount(room) { let n = 0; for (const p of room.players.values()) if (!p.bot && !p.gone) n++; return n; }
 function addBot(room) {
   const used = new Set([...room.players.values()].map(p => p.name));
   const name = BOT_NAMES.find(n => !used.has(n)) || ('Hunter' + (nextPid % 99));
@@ -1347,7 +1347,17 @@ function endMatch(room) {
 }
 
 const wss = new WebSocketServer({ server, maxPayload: 4096 });
+// Some networks and load balancers drop a quiet socket without telling either
+// end. Ping every 25s and cut the ones that stop answering, so a dead
+// connection becomes a reconnect instead of a frozen game.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { try { ws.terminate(); } catch (e) {} continue; }
+    ws.isAlive = false; try { ws.ping(); } catch (e) {}
+  }
+}, 25000);
 wss.on('connection', (ws, req) => {
+  ws.isAlive = true; ws.on('pong', () => { ws.isAlive = true; });
   const ip = ipOf(req);
   if (limited('ws:' + ip, 30, 60e3)) return ws.close();
   let p = null, room = null;
@@ -1364,11 +1374,23 @@ wss.on('connection', (ws, req) => {
       const cap = defense ? DEF_MAX : MAX_PER_ROOM;
       if (room.players.size >= cap) { send(ws, { t: 'error', message: 'Room is full' }); return ws.close(); }
       const name = user ? user.name : ('Guest' + (String(m.name || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 10) || nextPid));
+      // Coming back from a dropped connection: same person, same match, same score.
+      const held = [...room.players.values()].find(q => q.gone && !q.bot &&
+        (user ? (q.user && q.user.name === user.name) : q.name === name));
+      if (held) {
+        held.gone = 0; held.ws = ws; held.lastState = Date.now(); held.seen = new Set(); p = held;
+        send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, build: BUILD, resumed: true,
+          mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
+          players: [...room.players.values()].filter(q => !q.gone).map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
+        broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
+        console.log(`[net] ${p.name} came back to ${room.name} with ${p.score} points`);
+        return;
+      }
       p = { id: 'p' + (nextPid++), name, user, color: COLORS[room.players.size % COLORS.length], ws,
             x: 0, z: 0, yaw: 0, score: 0, kills: 0, tags: 0, trophies: 0, longest: 0, firing: 0, lastShot: -9, lastState: Date.now() };
       if (defense) defPlayerInit(p);
       room.players.set(p.id, p);
-      send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
+      send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, build: BUILD, mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
                  players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
       broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
       if (isDefense(room)) {
@@ -1448,9 +1470,18 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     if (!p || !room) return;
     if (p.bot) return;
+    // A dropped connection is usually a blip — a tunnel, a redeploy, a phone
+    // changing masts. Hold the player's score and lives for a while so coming
+    // back puts them where they were instead of starting them over.
+    if (room.running && !room.dead) {
+      p.gone = Date.now(); p.ws = null;
+      broadcast(room, { t: 'left', id: p.id });
+      console.log(`[net] ${p.name} dropped — holding their place for ${RESUME_SECONDS}s`);
+      return;
+    }
     room.players.delete(p.id);
     broadcast(room, { t: 'left', id: p.id });
-    if (room.players.size === 0) { room.emptiedAt = Date.now(); room.running = false; room.seed = (Math.random() * 0xffffffff) >>> 0; }
+    if (realCount(room) === 0) { room.emptiedAt = Date.now(); room.running = false; room.seed = (Math.random() * 0xffffffff) >>> 0; }
   });
   ws.on('error', () => {});
 });
@@ -1480,21 +1511,70 @@ setInterval(() => {
       if (room.timeLeft <= 10 && !room.warned10) { room.warned10 = true; broadcast(room, { t: 'final', seconds: 10 }); }
       if (room.timeLeft <= 0) endMatch(room);
     }
-    broadcast(room, {
+    // Everyone used to get every animal on the map, twice a car's worth of JSON
+    // a second. On a phone that is what "glitchy" feels like. Now each player
+    // gets what they could actually shoot (the server ignores hits past 230 m),
+    // at ten updates a second, rounded to 10 cm, with the flags left out when
+    // they are false. Same game, a fifth of the traffic.
+    room.animTick = (room.animTick | 0) + 1;
+    const withAnimals = room.animTick % 3 !== 0;
+    const head = {
       t: 'states',
       seconds: Math.max(0, room.phase === 'warm' ? room.warmLeft : room.phase === 'break' ? room.breakLeft : room.timeLeft),
       phase: room.phase || 'live', mode: room.mode || 'arena', wave: room.wave | 0,
       predsLeft: room.mode === 'defense' ? room.animals.filter(a => a.pred && a.state !== 'dead').length : 0,
-      players: [...room.players.values()].map(q => ({ id: q.id, x: +q.x.toFixed(2), z: +q.z.toFixed(2), yaw: +q.yaw.toFixed(2), score: q.score, kills: q.kills, tags: q.tags | 0, firing: q.firing, bot: !!q.bot, hp: q.hp | 0, max: q.maxHp | 0, down: !!q.down, pts: q.pts | 0, lives: q.lives == null ? 3 : q.lives, out: !!q.out })),
-      animals: room.animals.map(a => ({ id: a.id, sp: a.sp, tg: a.tagged ? 1 : 0, pr: a.pred ? 1 : 0, hf: a.pred ? +(a.hp / a.hpMax).toFixed(2) : 1, x: +a.x.toFixed(2), z: +a.z.toFixed(2), h: +a.heading.toFixed(2), v: +a.speed.toFixed(1), st: a.state === 'dead' ? 'd' : a.state === 'flee' ? 'f' : a.state === 'walk' ? 'w' : 'g', hp: +(a.hp / a.maxhp).toFixed(2), tr: a.trophy ? 1 : 0, m: a.male ? 1 : 0, wd: a.wounded ? 1 : 0 })),
-    });
+      players: [...room.players.values()].filter(q => !q.gone).map(q => {
+        const o = { id: q.id, x: +q.x.toFixed(1), z: +q.z.toFixed(1), yaw: +q.yaw.toFixed(2), score: q.score, kills: q.kills, hp: q.hp | 0, max: q.maxHp | 0 };
+        if (q.tags) o.tags = q.tags | 0;
+        if (q.firing) o.firing = 1;
+        if (q.bot) o.bot = 1;
+        if (q.down) o.down = 1;
+        if (q.pts) o.pts = q.pts | 0;
+        if (q.out) o.out = 1;
+        o.lives = q.lives == null ? 3 : q.lives;
+        return o;
+      }),
+    };
+    for (const q of room.players.values()) {
+      if (q.bot || q.gone || !q.ws) continue;
+      let msg = head;
+      if (withAnimals) {
+        // What an animal IS never changes, so it is sent the first time this
+        // player sees it and left out of every update after that.
+        const had = q.seen || (q.seen = new Set()), now = new Set(), list = [];
+        for (const a of room.animals) {
+          if (Math.abs(a.x - q.x) > 240 || Math.abs(a.z - q.z) > 240) continue;
+          now.add(a.id);
+          const o = { id: a.id, x: +a.x.toFixed(1), z: +a.z.toFixed(1), h: +a.heading.toFixed(2) };
+          if (!had.has(a.id)) { o.sp = a.sp; if (a.trophy) o.tr = 1; if (a.male) o.m = 1; if (a.pred) o.pr = 1; }
+          if (a.speed) o.v = +a.speed.toFixed(1);
+          const st = a.state === 'dead' ? 'd' : a.state === 'flee' ? 'f' : a.state === 'walk' ? 'w' : 'g';
+          if (st !== 'g') o.st = st;
+          if (a.tagged) o.tg = 1;
+          if (a.wounded) o.wd = 1;
+          if (a.pred) { const hf = +(a.hp / a.hpMax).toFixed(2); if (hf < 1) o.hf = hf; }
+          const hp = +(a.hp / a.maxhp).toFixed(2); if (hp < 1) o.hp = hp;
+          list.push(o);
+        }
+        q.seen = now;
+        msg = { ...head, animals: list };
+      }
+      send(q.ws, msg);
+    }
     for (const q of room.players.values()) q.firing = 0;
   }
 }, TICK_MS);
 
+const RESUME_SECONDS = 45;
 setInterval(() => {
   const now = Date.now();
-  for (const [name, r] of rooms) if (r.players.size === 0 && r.emptiedAt && now - r.emptiedAt > 300e3) { rooms.delete(name); console.log(`[room] ${name} removed`); }
+  for (const r of rooms.values()) for (const q of [...r.players.values()])
+    if (q.gone && now - q.gone > RESUME_SECONDS * 1000) {
+      r.players.delete(q.id); broadcast(r, { t: 'left', id: q.id });
+      console.log(`[net] ${q.name} did not come back — place released`);
+      if (realCount(r) === 0) { r.emptiedAt = now; r.running = false; }
+    }
+  for (const [name, r] of rooms) if (realCount(r) === 0 && r.emptiedAt && now - r.emptiedAt > 300e3) { rooms.delete(name); console.log(`[room] ${name} removed`); }
   for (const [tok, t] of Object.entries(DB.tokens)) if (now - t.at > 30 * 86400e3) delete DB.tokens[tok];
 }, 60e3);
 
