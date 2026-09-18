@@ -52,7 +52,7 @@ const PRICE_CENTS = parseInt(process.env.PRICE_CENTS || '499', 10);
 const CURRENCY = (process.env.CURRENCY || 'usd').toLowerCase();
 const PENDING = new Map();   // paypal order id -> account name
 const TICK_MS = 66;                                // 15 Hz
-const MATCH_SECONDS = 180;
+const MATCH_SECONDS = 120;   // two minutes: tight enough that every shot matters
 const MAX_PER_ROOM = 8;
 const MAP_R = 300;
 const COLORS = ['#e2542b', '#2b7fe2', '#8e2be2', '#e2c02b', '#2be29a', '#e22b7f', '#5ad6e2', '#e28b2b'];
@@ -949,12 +949,28 @@ function stepPredator(room, a, dt) {
   }
   if (a.retreatT > 0) { a.retreatT -= dt; a.x += Math.sin(a.heading) * s.charge * .6 * dt; a.z += Math.cos(a.heading) * s.charge * .6 * dt; return; }
   let tgt = null, bd = 1e9;
-  for (const p of room.players.values()) {
-    if (p.down || p.out || p.hp <= 0) continue;
-    // Arena predators hunt people, not the lodge's stand-ins. A bear that spends
-    // the whole match on a bot is pressure nobody ever feels.
-    if (a.roamer && p.bot) continue;
-    const d = Math.hypot(p.x - a.x, p.z - a.z); if (d < bd) { bd = d; tgt = p; }
+  const dist = p => Math.hypot(p.x - a.x, p.z - a.z);
+  if (a.roamer) {
+    // Arena predators hunt people, not the lodge's stand-ins, and they spread
+    // out: every hunter in the match has something coming for them, not just
+    // whoever happens to be nearest the spawn ring.
+    const humans = [...room.players.values()].filter(p => !p.bot && !p.down && !p.out && p.hp > 0);
+    if (humans.length) {
+      tgt = humans.find(p => p.id === a.tgtId) || null;
+      a.retarget = (a.retarget || 0) - dt;
+      if (!tgt || a.retarget <= 0) {
+        const load = new Map();
+        for (const o of room.animals) if (o !== a && o.pred && o.roamer && o.state !== 'dead' && o.tgtId) load.set(o.tgtId, (load.get(o.tgtId) || 0) + 1);
+        humans.sort((p, q) => ((load.get(p.id) || 0) - (load.get(q.id) || 0)) || (dist(p) - dist(q)));
+        tgt = humans[0]; a.tgtId = tgt.id; a.retarget = 6 + Math.random() * 4;
+      }
+      bd = dist(tgt);
+    }
+  } else {
+    for (const p of room.players.values()) {
+      if (p.down || p.out || p.hp <= 0) continue;
+      const d = dist(p); if (d < bd) { bd = d; tgt = p; }
+    }
   }
   if (!tgt) { a.heading += (Math.random() - .5) * dt; a.x += Math.sin(a.heading) * 1.5 * dt; a.z += Math.cos(a.heading) * 1.5 * dt; return; }
   const want = Math.atan2(tgt.x - a.x, tgt.z - a.z);
@@ -968,7 +984,8 @@ function stepPredator(room, a, dt) {
   if (a.cool > 0) return;
   a.cool = a.sp === 'lion' ? 1.35 : 1.7;
   if (a.roamer) {
-    tgt.hp -= a.sp === 'lion' ? 26 : 34;
+    tgt.hp -= a.sp === 'lion' ? 15 : 22;      // five or six bites a life — pressure, not a meat grinder
+    tgt.hurtT = 3;                              // no healing while something has its teeth in you
     send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp, lives: tgt.lives });
     broadcast(room, { t: 'feed', name: tgt.name, text: 'is being worked over by a ' + a.sp }, tgt.id);
     if (tgt.hp <= 0) arenaKillPlayer(room, tgt, a.sp);
@@ -1210,20 +1227,20 @@ function stockArena(room) {
   // Count only what is actually in view — 90 m, not the whole map.
   const near = a => live.some(p => Math.hypot(a.x - p.x, a.z - p.z) < 90);
   const close = room.animals.filter(a => !a.pred && a.state !== 'dead' && near(a)).length;
-  for (let i = close; i < 14; i++) room.animals.push(spawnAnimal(room));
+  for (let i = close; i < 20; i++) room.animals.push(spawnAnimal(room));
   const standing = live.filter(p => !p.bot).length || 1;
   const preds = room.animals.filter(a => a.pred && a.state !== 'dead');
-  const want = Math.min(6, standing + 1);          // solo still gets two things hunting them
+  const want = Math.min(7, standing + 2);          // solo: three things hunting you; a full lobby: seven
   for (let i = preds.length; i < want; i++) {
-    const b = spawnPredator(room, Math.random() < .45 ? 'lion' : 'bear', 1);
-    b.roamer = true; b.cool = 1.5 + Math.random() * 2;
+    const b = spawnPredator(room, Math.random() < .5 ? 'lion' : 'bear', 1);
+    b.roamer = true; b.cool = 1 + Math.random() * 1.5;
     room.animals.push(b);
   }
-  if (room.animals.length > 60) room.animals = room.animals.filter(a => a.pred || a.state !== 'dead').slice(-54);
+  if (room.animals.length > 72) room.animals = room.animals.filter(a => a.pred || a.state !== 'dead').slice(-64);
 }
 function startMatch(room) {
   room.phase = 'live';
-  room.running = true; room.time = 0; room.timeLeft = MATCH_SECONDS; room.animals = [];
+  room.running = true; room.time = 0; room.timeLeft = MATCH_SECONDS; room.animals = []; room.warned10 = false;
   for (const p of room.players.values()) { p.score = 0; p.kills = 0; p.tags = 0; p.trophies = 0; p.longest = 0; arenaPlayerInit(p); }
   for (let i = 0; i < 18; i++) room.animals.push(spawnAnimal(room));
   stockArena(room);
@@ -1376,8 +1393,12 @@ setInterval(() => {
       room.time += dt; room.timeLeft -= dt;
       room.stockT = (room.stockT || 0) - dt;
       if (room.stockT <= 0) { room.stockT = 1; stockArena(room); }
+      // A mauling heals over time if you get away — so shooting a predator or
+      // out-running it actually buys you something.
+      for (const p of room.players.values()) if (!p.bot && !p.out && p.hp > 0 && p.hp < p.maxHp) if (p.hurtT > 0) p.hurtT -= dt; else p.hp = Math.min(p.maxHp, p.hp + 4 * dt);
       for (const a of room.animals) { if (a.pred) stepPredator(room, a, dt); else updateAnimal(room, a, dt); }
       for (const p of room.players.values()) if (p.bot) stepBot(room, p, dt);
+      if (room.timeLeft <= 10 && !room.warned10) { room.warned10 = true; broadcast(room, { t: 'final', seconds: 10 }); }
       if (room.timeLeft <= 0) endMatch(room);
     }
     broadcast(room, {
