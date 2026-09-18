@@ -1261,7 +1261,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v4';   // bump this whenever you change the policy
+const BUILD = 'arena-v5';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1742,19 +1742,22 @@ class LocalAIAdapter{
   emit(){} peers(){ return this._peers; } stop(){ this._peers=[]; }
 }
 class WebSocketAdapter{
-  constructor(url,room,name,mode){ this.url=url; this.room=room; this.name=name; this.mode=mode||'arena'; this._peers=[]; this.map={}; this.onEvent=null; this.acc=0; }
-  start(){ return new Promise((res,rej)=>{
-      let done=false; const to=setTimeout(()=>{ if(!done){done=true; try{this.ws.close();}catch(e){} rej(new Error('Connection timed out')); } },8000);
-      try{ this.ws=new WebSocket(this.url); }catch(e){ clearTimeout(to); return rej(e); }
-      this.ws.onopen=()=>this.ws.send(JSON.stringify({t:'join',room:this.room,name:this.name,token:save.token||'',mode:this.mode}));
-      this.ws.onerror=()=>{ if(!done){done=true; clearTimeout(to); rej(new Error('Could not reach the server')); } };
-      this.ws.onclose=()=>{ if(this.onEvent)this.onEvent({t:'left',name:'connection'}); };
-      this.ws.onmessage=e=>{ let m; try{ m=JSON.parse(e.data); }catch(err){ return; }
+  constructor(url,room,name,mode){ this.url=url; this.room=room; this.name=name; this.mode=mode||'arena';
+    this._peers=[]; this.map={}; this.onEvent=null; this.acc=0; this.lastMsg=0; this.retryT=0; this.closed=false; }
+  _wire(ws,onWelcome){
+    ws.onopen=()=>ws.send(JSON.stringify({t:'join',room:this.room,name:this.name,token:save.token||'',mode:this.mode}));
+    ws.onclose=()=>{ if(!this.closed)this._dropped(); };
+    ws.onerror=()=>{};
+    ws.onmessage=e=>{ let m; try{ m=JSON.parse(e.data); }catch(err){ return; }
+      this.lastMsg=nowMs(); if(NET.lost)netBack();
+      this._handle(m,onWelcome); };
+  }
+  _handle(m,onWelcome){
         if(m.t==='welcome'){ this.id=m.id;
           this._peers=(m.players||[]).filter(p=>p.id!==m.id).map((p,i)=>({...p,color:p.color||RIVAL_COLORS[i%RIVAL_COLORS.length],x:0,z:0,yaw:0,tx:0,tz:0,score:0,kills:0,firing:0,bob:0}));
-          for(const p of this._peers)this.map[p.id]=p;
-          this.auth=!!m.authoritative; this.guest=!!m.guest; if(m.seconds)matchSeconds=m.seconds;
-          if(!done){ done=true; clearTimeout(to); res({seed:m.seed>>>0,you:m.id,auth:this.auth,guest:this.guest}); } }
+          this.map={}; for(const p of this._peers)this.map[p.id]=p;
+          this.auth=!!m.authoritative; this.guest=!!m.guest; this.build=m.build||''; if(m.seconds)matchSeconds=m.seconds;
+          if(onWelcome)onWelcome({seed:m.seed>>>0,you:m.id,auth:this.auth,guest:this.guest,build:this.build,resumed:!!m.resumed}); }
         else if(m.t==='warmup'){ if(this.onEvent)this.onEvent({t:'warmup',seconds:m.seconds,players:m.players,defense:!!m.defense,team:m.team}); }
         else if(['wave','break','hp','down','revived','secondwind','over','bought','respawn','mauledDown','eliminated','final'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
         else if(m.t==='start'){ if(this.onEvent)this.onEvent({t:'start',seconds:m.seconds,players:m.players}); }
@@ -1762,8 +1765,9 @@ class WebSocketAdapter{
         else if(m.t==='shotResult'){ if(this.onEvent)this.onEvent({t:'shotResult',...m}); }
         else if(m.t==='error'){ if(this.onEvent)this.onEvent({t:'error',message:m.message}); }
         else if(m.t==='joined'&&m.player&&m.player.id!==this.id){
-          const p={...m.player,color:m.player.color||RIVAL_COLORS[this._peers.length%RIVAL_COLORS.length],x:0,z:0,yaw:0,tx:0,tz:0,score:0,kills:0,firing:0,bob:0};
-          this._peers.push(p); this.map[p.id]=p; if(this.onEvent)this.onEvent({t:'joined',name:p.name}); }
+          if(!this.map[m.player.id]){
+            const p={...m.player,color:m.player.color||RIVAL_COLORS[this._peers.length%RIVAL_COLORS.length],x:0,z:0,yaw:0,tx:0,tz:0,score:0,kills:0,firing:0,bob:0};
+            this._peers.push(p); this.map[p.id]=p; if(this.onEvent)this.onEvent({t:'joined',name:p.name}); } }
         else if(m.t==='left'){ const p=this.map[m.id]; if(p){ this._peers=this._peers.filter(x=>x.id!==m.id); delete this.map[m.id]; if(this.onEvent)this.onEvent({t:'left',name:p.name}); } }
         else if(m.t==='states'){ for(const st of m.players||[]){ const p=this.map[st.id]; if(!p)continue; p.tx=st.x; p.tz=st.z; p.yaw=st.yaw; p.score=st.score|0; p.kills=st.kills|0; if(st.firing)p.firing=.25; }
           if(m.animals)applyRemoteAnimals(m.animals);
@@ -1776,9 +1780,27 @@ class WebSocketAdapter{
         else if(m.t==='kill'&&m.id!==this.id&&this.onEvent)this.onEvent({t:'kill',name:m.name,species:m.species,points:m.points});
         else if(m.t==='tagged'&&this.onEvent)this.onEvent({t:'tagged',tags:m.tags,score:m.score});
         else if(m.t==='feed'&&this.onEvent)this.onEvent({t:'feed',name:m.name,text:m.text});
-      };
+  }
+  start(){ return new Promise((res,rej)=>{
+      let done=false; const to=setTimeout(()=>{ if(!done){done=true; try{this.ws.close();}catch(e){} rej(new Error('Connection timed out')); } },8000);
+      try{ this.ws=new WebSocket(this.url); }catch(e){ clearTimeout(to); return rej(e); }
+      const fail=()=>{ if(!done){ done=true; clearTimeout(to); rej(new Error('Could not reach the server')); } };
+      this._wire(this.ws,info=>{ if(!done){ done=true; clearTimeout(to); this.lastMsg=nowMs(); res(info); } });
+      const onerr=this.ws.onerror; this.ws.onerror=e=>{ fail(); };
     }); }
+  // The connection went away mid-match. Say so, keep the world moving, and
+  // quietly try to get back in — the server holds your score and lives for 45s.
+  _dropped(){ if(this.closed||NET.lost)return; netLost(); this.retryT=0; }
+  retry(){
+    if(this.closed)return;
+    let ws; try{ ws=new WebSocket(this.url); }catch(e){ return; }
+    this.ws=ws; this._wire(ws,()=>{ this.lastMsg=nowMs(); netBack(); });
+  }
   tick(dt,self){ this.acc+=dt;
+    // Nothing from the server for a couple of seconds means the socket is gone
+    // even if the browser has not noticed yet.
+    if(this.lastMsg&&!NET.lost&&nowMs()-this.lastMsg>3000)this._dropped();
+    if(NET.lost){ this.retryT-=dt; if(this.retryT<=0){ this.retryT=2.5; this.retry(); } }
     if(this.acc>=NET_TICK&&this.ws&&this.ws.readyState===1){ this.acc=0;
       this.ws.send(JSON.stringify({t:'state',x:+self.x.toFixed(2),z:+self.z.toFixed(2),yaw:+self.yaw.toFixed(2),score:self.score,kills:self.kills,firing:self.firing?1:0})); }
     // Smooth remote players toward their last reported position so 15/sec
@@ -1788,17 +1810,21 @@ class WebSocketAdapter{
       const moved=Math.hypot(p.x-ox,p.z-oz); p.bob+=moved*2.2; p.firing=Math.max(0,p.firing-dt); } }
   emit(ev){ if(this.ws&&this.ws.readyState===1)this.ws.send(JSON.stringify(ev)); }
   peers(){ return this._peers; }
-  stop(){ try{ this.ws&&this.ws.close(); }catch(e){} this._peers=[]; this.map={}; }
+  stop(){ this.closed=true; try{ this.ws&&this.ws.close(); }catch(e){} this._peers=[]; this.map={}; }
 }
 // Server-owned animals. We keep a local object per id so the existing
 // drawAnimal code renders them, and smooth toward the server's position.
 function applyRemoteAnimals(list){
   const seen=new Set();
   for(const r of list){ seen.add(r.id); let a=remoteAnimals.get(r.id);
-    if(!a){ a={sp:r.sp,x:r.x,z:r.z,tx:r.x,tz:r.z,heading:r.h,speed:r.v,state:'graze',t:0,phase:Math.random()*TAU,dip:0,male:!!r.m,
-              wounded:false,deadT:0,hp:1,alert:0,bleedT:0,faceDir:1,trophy:!!r.tr,tagged:false,hurtT:0,remote:true,id:r.id}; remoteAnimals.set(r.id,a); }
-    a.tx=r.x; a.tz=r.z; a.heading=r.h; a.speed=r.v; a.wounded=!!r.wd; a.hpFrac=r.hp;
-    const st=r.st==='d'?'dead':r.st==='f'?'flee':r.st==='w'?'walk':'graze';
+    // The server sends what an animal IS only the first time we see it, then
+    // just where it is. Anything left out of an update has not changed.
+    if(!a){ if(!r.sp)continue;
+            a={sp:r.sp,x:r.x,z:r.z,tx:r.x,tz:r.z,heading:r.h,speed:r.v||0,state:'graze',t:0,phase:Math.random()*TAU,dip:0,male:!!r.m,
+              wounded:false,deadT:0,hp:1,alert:0,bleedT:0,faceDir:1,trophy:!!r.tr,pred:!!r.pr,tagged:false,hurtT:0,remote:true,id:r.id}; remoteAnimals.set(r.id,a); }
+    a.tx=r.x; a.tz=r.z; a.heading=r.h; a.speed=r.v||0; a.wounded=!!r.wd; a.tagged=!!r.tg;
+    a.hpFrac=r.hp==null?1:r.hp; if(r.hf!=null)a.predHp=r.hf;
+    const st=r.st==='d'?'dead':r.st==='f'?'flee':r.st==='w'?'walk':r.st==='g'?'graze':'graze';
     if(st==='dead'&&a.state!=='dead'){a.deadT=0;} a.state=st; }
   for(const [id,a] of remoteAnimals){ if(!seen.has(id))remoteAnimals.delete(id); }
   animals=[...remoteAnimals.values()];
@@ -2528,6 +2554,7 @@ function fire(){
   if(mode==='arena'&&(ARENA.dead||ARENA.out))return;
   if(!running||dying||reloading>0)return;
   if(arenaAuth&&NETA){
+    if(NET.lost){ sfxClick(0,1100); if(!callout||callout.t<.5)callout={text:'No connection',sub:'Hold on — getting you back in',c:'#ffb03b',t:1.2}; return; }
     if(weapon==='rifle'){ if(ammo<=0){ sfxClick(0,1400); return; } ammo--; sfxShot(); flash=.08; recoil=1;
       for(let i=0;i<12;i++)particles.push({x:cx+W*.07,y:H*.53,vx:rnd(-40,40)-60,vy:rnd(-90,-20),life:rnd(.6,1.4),c:'#c9c4b6',sz:rnd(6,16),smoke:true});
       P.pitch=clamp(P.pitch+.04*(scoped?.6:1),-.7,.7); }
@@ -3150,6 +3177,15 @@ function drawHUD(){
     ctx.fillText(ARENA.out?(W<420?'Out of lives · watching to the end':'Three lives gone. Watching until the match ends.')
       :(ARENA.lives+' li'+(ARENA.lives===1?'fe':'ves')+' left — back in a moment'),cx,dy+30);
     ctx.restore(); }
+  if(NET.lost&&mode==='arena'){
+    ctx.save(); ctx.textAlign='center'; ctx.shadowColor='rgba(0,0,0,.85)'; ctx.shadowBlur=12;
+    const by=Math.min(H*.16,120);
+    ctx.fillStyle='rgba(20,10,0,.55)'; ctx.fillRect(0,by-30,W,62);
+    ctx.font=`bold ${Math.min(26,W*.045)}px Georgia,serif`; ctx.fillStyle='#ffb03b';
+    ctx.fillText('RECONNECTING'+'.'.repeat(1+(Math.floor(time*2)%3)),cx,by);
+    ctx.font='13px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.9)';
+    ctx.fillText('Your score and lives are being held · '+Math.max(0,Math.ceil(40-NET.t))+'s',cx,by+22);
+    ctx.restore(); }
   drawControls();
   drawTutorial();
   if(mode==='arena')drawMinimap();
@@ -3237,7 +3273,7 @@ function frame(now){
   updateTutorial(dt);
   if(titleUp&&!running){ P.yaw+=dt*.035; time+=dt*.25; tod=.30+.12*Math.sin(time*.05); FOG=palAt('fog'); LIGHT=palAt('light'); }
   if(running){
-    time+=dt; if(!dying&&mode!=='surv'&&!arenaAuth){ timeLeft-=dt; if(timeLeft<=0){ if(mode==='chal')endChallenge(); else if(mode==='arena')endArena(); else endDay(); } }
+    time+=dt; if(!dying&&mode!=='surv'&&(!arenaAuth||NET.lost)){ timeLeft-=dt; if(timeLeft<=0){ if(mode==='chal')endChallenge(); else if(mode==='arena')endArena(); else endDay(); } }
     tod=(COND&&COND.id==='dawn')?clamp(.06+time/DAY*.12,0,1):(COND&&COND.id==='dusk')?clamp(.72+time/DAY*.26,0,1):mode==='surv'?.4:(mode==='arena'||mode==='chal')?.45:(LV&&LV.dusk?.55+.45*(1-timeLeft/DAY):1-timeLeft/DAY); FOG=palAt('fog'); LIGHT=palAt('light');
     const tz=scoped?(weapon==='rifle'?scopeZoom():1.7):1; zoom+=(tz-zoom)*Math.min(1,dt*9);
     scopeIn=scoped?Math.min(1,scopeIn+dt*4):0;
@@ -3252,6 +3288,11 @@ function frame(now){
     recoil=Math.max(0,recoil-dt*5); flash=Math.max(0,flash-dt); hitMark=Math.max(0,hitMark-dt); killKick=Math.max(0,killKick-dt*2.2);
     if(reloading>0){ reloading-=dt; if(reloading<=0){reloading=0;ammo=magSize();} }
     if(callout){callout.t-=dt;if(callout.t<=0)callout=null;} if(warn){warn.t-=dt;if(warn.t<=0)warn=null;}
+    if(NET.lost&&running){ NET.t+=dt;
+      if(NET.t>40&&!NET.gaveUp){ NET.gaveUp=true; NET.lost=false;
+        if(NETA&&NETA.stop)NETA.stop();
+        callout={text:'Lost the server',sub:'Your match was scored up to here',c:'#ff4d3d',t:4};
+        if(mode==='arena')endArena(); } }
     floaters=floaters.filter(fl=>(fl.t-=dt)>0); for(const k of killFeed)k.t-=dt; killFeed=killFeed.filter(k=>k.t>0);
     if(streakT>0){ streakT-=dt; if(streakT<=0)streak=0; } for(const b of blood)b.t+=dt; blood=blood.filter(b=>b.t<90); for(const b of dirt)b.t+=dt; dirt=dirt.filter(b=>b.t<14); for(const q of tracks)q.t+=dt; tracks=tracks.filter(q=>q.t<75); for(const s of stuck)s.t+=dt;
     if(!dying)updatePlayer(dt); else deathT+=dt;
@@ -3534,6 +3575,17 @@ let titleUp=true, paused=false, entryMode='in';
 let warmup=0, warmPlayers=0;   // arena warm-up: countdown before the round starts
 // Ridge Defense (co-op waves) — everything here is told to us by the server
 let ARENA={lives:3,out:false,dead:false,deadT:0,finalT:0,leader:null};
+// Losing the connection mid-match used to freeze the world solid: the clock is
+// the server's, so when the packets stopped, everything stopped and the player
+// was stuck. Now we say what happened, keep the world running, and reconnect.
+let NET={lost:false,t:0,gaveUp:false,drops:0,backs:0};
+const nowMs=()=>(window.performance&&performance.now?performance.now():Date.now());
+function netLost(){ if(NET.lost)return; NET.lost=true; NET.t=0; NET.drops++;
+  callout={text:'Connection lost',sub:'Holding your score — trying to get you back in',c:'#ffb03b',t:3};
+  tone(320,.3,.25,'square'); }
+function netBack(){ if(!NET.lost)return; NET.lost=false; NET.t=0; NET.gaveUp=false; NET.backs++;
+  callout={text:'Back in the match',sub:'Score and lives kept',c:'#7cff5a',t:2.5};
+  tone(720,.2,.25,'triangle'); }
 let DEF={on:false,phase:'',wave:0,left:0,secs:0,pts:0,max:100,down:false,team:[],lobby:[],shop:null,up:{}};
 const LEGAL={
   privacy:{title:'Privacy',body:`
@@ -3960,6 +4012,9 @@ async function startArena(online,netMode){
   if(!arenaOnline)callout={text:netErr?'Offline — server unreachable':'Offline practice match',
     sub:netErr||'These are practice bots, not real hunters',c:'#ffb03b',t:6};
   if(arenaOnline)setTxt('netStatus','In room '+(save.room||'RIDGE')+(info.guest?' · sign in to keep your score':''));
+  if(arenaOnline&&!info.build){
+    callout={text:'Server is out of date',sub:'Online play may misbehave until the server is updated',c:'#ffb03b',t:7};
+    setTxt('netStatus','⚠ The game server is running an older version than this page — online play may misbehave.'); }
 }
 function onNetEvent(ev){
   if(ev.t==='shotResult'){ if(!ev.ok){
@@ -4004,14 +4059,14 @@ function onNetEvent(ev){
     setTxt('endTitle','The valley fell'); setTxt('endSub','You held out for '+ev.wave+' wave'+(ev.wave===1?'':'s')+'.');
     setHtml('eGoals',(ev.board||[]).map((b,i)=>`<div class="goal"><span class="s">${i+1}.</span> <b style="${NETA&&b.id===NETA.id?'color:#ff6a13':''}">${b.name}${b.bot?' <small style="color:var(--faint)">bot</small>':''}</b> — ${b.pts} pts <span style="color:var(--faint)">(${b.kills} shot, ${b.tags} tagged)</span></div>`).join(''));
     setTxt('endCash',''); setTxt('endXP',''); $('endScreen').classList.remove('hidden'); if(NETA){NETA.stop();NETA=null;} DEF.on=false; return; }
-  if(ev.t==='warmup'){ warmup=ev.seconds||0; warmPlayers=ev.players||1; score=0;
+  if(ev.t==='warmup'){ if(arenaEnded||mode!=='arena')return; warmup=ev.seconds||0; warmPlayers=ev.players||1; score=0;
     if(ev.defense){ DEF.on=true; DEF.phase='warm'; DEF.lobby=(ev.team||[]).map(t=>({name:t.name,bot:t.bot,color:t.color,you:NETA&&t.id===NETA.id}));
       warn={text:'HOLD THE RIDGE',t:2.6};
       callout={text:'Squad forming',sub:'Wave one is bears. Stay together and watch each other.',c:'#ff4d3d',t:4}; return; }
     warn={text:'WARM-UP',t:2.5};
     callout={text:'Get your bearings',sub:'Have a look around — the round starts for everyone at once',c:'#7cff5a',t:4};
     return; }
-  if(ev.t==='start'){ warmup=0; timeLeft=ev.seconds; score=0; stats.kills={}; stats.shots=0; stats.hits=0; ARENA={lives:3,out:false,dead:false,deadT:0,finalT:0,leader:null}; arenaEnded=false; running=true; warn={text:'GO',t:2}; tone(880,.18,.2,'triangle'); tone(1320,.3,.2,'triangle',.12); return; }
+  if(ev.t==='start'){ if(arenaEnded||mode!=='arena')return; warmup=0; timeLeft=ev.seconds; score=0; stats.kills={}; stats.shots=0; stats.hits=0; ARENA={lives:3,out:false,dead:false,deadT:0,finalT:0,leader:null}; arenaEnded=false; running=true; warn={text:'GO',t:2}; tone(880,.18,.2,'triangle'); tone(1320,.3,.2,'triangle',.12); return; }
   if(ev.t==='end'){ endArena(ev.board); return; }
   if(ev.t==='error'){ callout={text:ev.message||'Server error',sub:'',c:'#ff3b1f',t:3}; return; }
   if(ev.t==='tagged'){ score=ev.score; pushFeed('Tagged — '+ev.tags+' this match','','#7cff5a'); return; }
@@ -4039,6 +4094,11 @@ function endArena(serverBoard){
   setTxt('accuracy',stats.shots?`${stats.shots} shots, ${stats.hits} hits — ${Math.round(stats.hits/stats.shots*100)}% accuracy.`:'You never fired a shot.');
   setTxt('eUnlock',place===1?'You out-hunted the field.':'Best arena score so far: '+save.tot.bestArena);
   $('endScreen').classList.remove('hidden');
+  // Leave the room properly. The server starts the next match a few seconds
+  // later, and staying connected used to restart the world underneath the end
+  // screen — score reset to zero, the canvas running behind the menus.
+  if(NETA){NETA.stop();NETA=null;}
+  arenaOnline=false; arenaAuth=false; remoteAnimals=new Map(); animals=[];
 }
 function startChallenge(id){
   const c=CHALLENGES.find(x=>x.id===id); if(!c)return;
