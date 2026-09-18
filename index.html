@@ -214,6 +214,7 @@
   @media (max-width:560px){ .modeCard{flex-direction:column;align-items:stretch;text-align:left}
     .modeCard button{width:100%} }
   .arenaStatus{font-size:12.5px;color:var(--dim);margin-top:10px;min-height:16px;text-align:center}
+  .svrDot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#8a8f86;margin-right:7px;vertical-align:middle}
   .arenaHow{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
   .arenaHow div{flex:1;min-width:110px;background:rgba(255,255,255,.05);border:1px solid var(--line);
     border-radius:9px;padding:11px 12px}
@@ -789,11 +790,12 @@
       <div class="arenaHero">
         <div class="arenaLiveRow"><span class="dot"></span><span id="liveCount">Looking for hunters…</span></div>
         <h3 class="arenaTitle">OPEN<em>ARENA</em></h3>
-        <p class="arenaSub">Three minutes. Everything is fair game. Whoever brings in the most animals wins.</p>
+        <p class="arenaSub">Two minutes. Everything is fair game — and the bears and cats are hunting you back. Whoever brings in the most animals wins.</p>
         <button id="arenaOnlineBtn" class="arenaGo">Join a match</button>
         <p class="heroLock" id="heroLock"></p>
         <p class="heroLockSub" id="heroLockSub"></p>
         <p id="netStatus" class="arenaStatus"></p>
+        <p class="arenaStatus"><span id="svrDot" class="svrDot"></span><span id="svrState">Checking the server…</span></p>
         <div class="arenaHow">
           <div><b>01</b><span>Shoot what you can</span></div>
           <div><b>02</b><span>Walk out and tag it</span></div>
@@ -931,7 +933,7 @@
       <p style="font-size:12px;color:var(--muted)">With auto-run on you always run and <kbd>Shift</kbd> walks — worth turning on, since tapping Shift repeatedly can trigger Windows Sticky Keys. Toggle in-game with <kbd>E</kbd>.</p>
       <p style="font-size:12px;color:var(--muted)">Tap to force touch controls or keyboard &amp; mouse if the automatic choice is wrong for your device.</p>
       <h2>Version</h2>
-      <p style="font-size:12px;color:var(--muted)">This copy of the game is build <b id="buildStamp">—</b>. If you have just uploaded a change and this has not moved, the browser is showing you a cached copy — reload with Ctrl+Shift+R.</p>
+      <p style="font-size:12px;color:var(--muted)">This copy of the game is build <b id="buildStamp">—</b>, and the server it is talking to is <b id="buildStamp2">—</b>. Those two should match after an upload. If you have just uploaded a change and this has not moved, the browser is showing you a cached copy — reload with Ctrl+Shift+R.</p>
       <h2>Rules of the hunt</h2>
       <p><b>Tags.</b> Each hunt licenses you for certain species only. Shooting anything else costs you $200 and a score penalty — check the tag list before you pull. <b>Self-defence is always legal:</b> an animal charging you can be shot on any hunt, no penalty, and it still scores.</p>
       <p><b>Senses.</b> Animals see you when you're upright and moving in front of them, hear you when you run, and smell you when the wind blows from you to them — watch the wind arrow on the compass. A rifle shot spooks everything for 150 m; the bow is nearly silent.</p>
@@ -1248,7 +1250,7 @@ try{ const s=localStorage.getItem('ridgeline2'); if(s){ hadLocalSave=true; const
 //    Leave it empty and the game still works — it just runs without accounts,
 //    keeping progress on each player's own device.
 //      e.g. const DEFAULT_SERVER = 'wss://api.yourdomain.com';
-const DEFAULT_SERVER = '';
+const DEFAULT_SERVER = 'wss://www.ridgelineseason.com/api';
 
 // 2. The address people use to reach you about their data. It appears in the
 //    privacy policy and the terms. A policy with no contact route is not one.
@@ -1259,7 +1261,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v3';   // bump this whenever you change the policy
+const BUILD = 'arena-v4';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1827,7 +1829,15 @@ function stepBot(r,dt,onEvent){
 const RIVAL_NAMES=['Dale','Marisol','Otis','Rennick','Sable','Hutch'];
 const RIVAL_COLORS=['#e2542b','#2b7fe2','#8e2be2','#e2c02b','#2be29a','#e22b7f'];
 let NETA=null;
-function serverURL(){ return ((save.server||'').trim())||DEFAULT_SERVER||''; }
+function serverURL(){
+  const manual=(save.server||'').trim(); if(manual)return manual;
+  if(DEFAULT_SERVER)return DEFAULT_SERVER;
+  // Served from a real website? Then the game server is this same site, behind
+  // /api. Nobody should have to edit a line of code to get online play working.
+  if(location.protocol==='https:')return 'wss://'+location.host+'/api';
+  if(location.protocol==='http:'&&location.host)return 'ws://'+location.host+'/api';
+  return '';
+}
 function httpBase(){ const s=serverURL(); if(!s)return ''; return s.replace(/^wss:/,'https:').replace(/^ws:/,'http:').replace(/\/+$/,''); }
 async function api(path,body,method){ const base=httpBase(); if(!base)throw new Error('Cannot reach the game server right now');
   const r=await fetch(base+path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json',...(save.token?{Authorization:'Bearer '+save.token}:{})},body:body?JSON.stringify(body):undefined});
@@ -1865,11 +1875,12 @@ async function deleteMyAccount(){
 }
 async function acctLogout(){ try{ await api('/api/logout',{}); }catch(e){} save.token=''; account=null; persist(); acctUI(); setTxt('acctStatus','Signed out.'); }
 async function acctSync(){ try{ const {token,...rest}=save; await api('/api/cloud',{save:rest}); setTxt('acctStatus','Progress backed up.'); }catch(e){ setTxt('acctStatus',e.message); } }
-let liveTimer=null;
+let liveTimer=null, SERVER_OK=null, SERVER_BUILD='', SERVER_STORE='';
 async function pollPresence(){
   const base=httpBase();
   const el=$('liveCount'), t=$('titleLive');
-  if(!base){ if(el)setTxt('liveCount','A match is ready when you are'); if(t)t.style.display='none'; return; }
+  if(!base){ if(el)setTxt('liveCount','Offline — no server address set'); if(t)t.style.display='none';
+    setTxt('svrState','No server address set — online play is off'); return; }
   try{
     const j=await fetch(base+'/api/status').then(r=>r.json());
     const n=j.players|0, a=j.accounts|0;
@@ -1877,7 +1888,16 @@ async function pollPresence(){
       ? (n===1?'1 hunter out there now':n+' hunters out there now')
       : 'A match is ready when you are');
     if(t){ t.style.display=n>0?'':'none'; setTxt('titleLive', n+(n===1?' hunter online':' hunters online')); }
-  }catch(e){ if(el)setTxt('liveCount','A match is ready when you are'); if(t)t.style.display='none'; }
+    SERVER_OK=true; SERVER_BUILD=j.build||''; SERVER_STORE=j.storage||'';
+    setTxt('svrState','Server online'+(j.build?' · build '+j.build:'')+(n>0?' · '+n+' playing':''));
+    const sv=$('svrDot'); if(sv)sv.style.background='#7cff5a';
+  }catch(e){
+    SERVER_OK=false;
+    if(el)setTxt('liveCount','Server unreachable — online play is down'); if(t)t.style.display='none';
+    setTxt('svrState','Cannot reach the game server at '+base+' — you can still hunt offline');
+    const sv=$('svrDot'); if(sv)sv.style.background='#ff4d3d';
+  }
+  setTxt('buildStamp2',SERVER_BUILD?(BUILD+'  ·  server '+SERVER_BUILD):BUILD);
 }
 function startPresence(){ if(liveTimer)clearInterval(liveTimer); pollPresence(); liveTimer=setInterval(pollPresence,20000); }
 async function checkServerCapabilities(){
@@ -2492,7 +2512,7 @@ function applyHit(a,zone,d,p){
     a.alert=1.2; if(a.state!=='charge'){a.state='flee';a.t=6;a.heading=angleToPlayer(a)+Math.PI;} return; }
   stats.hits++; hitMark=.35; const sp=SP[a.sp]; a.hp-=damageFor(zone); a.hurtT=.3;
   const willKill=a.hp<=0; hitKind=willKill?'kill':(zone==='vital'||zone==='body')?'wound':'graze';
-  if(willKill){ killKick=.5; sfxThud&&sfxThud(); }
+  if(willKill){ killKick=.5; sfxThud(); }
   // blood: a burst that scales with how well you hit
   if(p){ const n=zone==='vital'?22:zone==='head'?18:zone==='body'?12:6;
     for(let i=0;i<n;i++)particles.push({x:p.sx+rnd(-p.s*.15,p.s*.15),y:p.gy-p.s*sp.k*sp.bodyY,vx:rnd(-1.4,1.4)*p.s*1.6,vy:rnd(-1.8,.4)*p.s,life:rnd(.35,.9),c:i%3?'#8a0f0f':'#c41d1d',sz:Math.max(1.5,p.s*(zone==='vital'?.09:.06))}); }
@@ -3917,9 +3937,10 @@ async function startArena(online,netMode){
       setTxt('netStatus','Finding a match…');
       adapter=new WebSocketAdapter(url,save.room||'RIDGE',save.name||'Hunter',netMode||'arena'); } }
   if(!adapter)adapter=new LocalAIAdapter(3);
-  let info;
+  let info, netErr=null;
   try{ info=await adapter.start(); }
-  catch(err){ setTxt('netStatus','Starting a practice match…');
+  catch(err){ netErr=err&&err.message||'Could not reach the server';
+    setTxt('netStatus','⚠ '+netErr+' — playing offline against practice bots. Real hunters will not see you.');
     adapter=new LocalAIAdapter(3); info=await adapter.start(); }
   NETA=adapter; NETA.onEvent=onNetEvent;
   arenaAuth=!!info.auth; remoteAnimals=new Map();
@@ -3935,8 +3956,10 @@ async function startArena(online,netMode){
   rivals=NETA.peers();
   running=true; if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
   $('lodge').classList.add('hidden'); $('endScreen').classList.add('hidden'); tryLock();
-  warn={text:(arenaOnline?'ONLINE ARENA · '+(save.room||'RIDGE'):'ARENA')+' — most points in 3 minutes',t:4};
-  setTxt('netStatus',arenaOnline?('In room '+(save.room||'RIDGE')+(info.guest?' · sign in to keep your score':'')):'Practice match');
+  warn={text:(arenaOnline?'ONLINE ARENA · '+(save.room||'RIDGE'):'OFFLINE PRACTICE MATCH')+' — most points in 2 minutes',t:4};
+  if(!arenaOnline)callout={text:netErr?'Offline — server unreachable':'Offline practice match',
+    sub:netErr||'These are practice bots, not real hunters',c:'#ffb03b',t:6};
+  if(arenaOnline)setTxt('netStatus','In room '+(save.room||'RIDGE')+(info.guest?' · sign in to keep your score':''));
 }
 function onNetEvent(ev){
   if(ev.t==='shotResult'){ if(!ev.ok){
@@ -3969,7 +3992,7 @@ function onNetEvent(ev){
   if(ev.t==='mauled'){ hurtFlash=1; lastHurt=0; sfxRoar();
     callout={text:'MAULED',sub:'A bear caught you out here — move, and watch your back',c:'#ff4d3d',t:3};
     warn={text:'BEAR',t:1.8}; return; }
-  if(ev.t==='hp'){ if(!DEF.down)health=ev.hp; lastHurt=0; hurtFlash=1; if(ev.by)callout={text:ev.by==='lion'?'Lion!':'Bear!',sub:'It is on you — put it down or move',c:'#ff4d3d',t:1.2}; sfxHurt&&sfxHurt(); return; }
+  if(ev.t==='hp'){ if(!DEF.down)health=ev.hp; lastHurt=0; hurtFlash=1; if(ev.by)callout={text:ev.by==='lion'?'Lion!':'Bear!',sub:'It is on you — put it down or move',c:'#ff4d3d',t:1.2}; sfxThud(); tone(90,.35,.4,'sawtooth'); return; }
   if(ev.t==='down'){ if(NETA&&ev.id===NETA.id){ DEF.down=true; health=0; callout={text:'YOU ARE DOWN',sub:'A teammate standing next to you for 3 s gets you up',c:'#ff4d3d',t:6}; }
     else pushFeed(ev.name+' is down — get to them','','#ff9a63'); return; }
   if(ev.t==='revived'){ if(NETA&&ev.id===NETA.id){ DEF.down=false; health=ev.hp; callout={text:'Back up',sub:'Thank your teammate',c:'#7cff5a',t:2.5}; }
