@@ -21,9 +21,12 @@
  *   ADMIN_KEY=secret node server.js   enables /api/admin/* endpoints
  *
  * STORAGE
- *   data.json next to this file, written atomically. This is fine for
- *   thousands of accounts. Past that, swap the load()/persist() pair for
- *   SQLite or Postgres — nothing else touches the disk.
+ *   Set DATABASE_URL and accounts live in Postgres — the only thing that
+ *   survives on a host like DigitalOcean App Platform, where the container's
+ *   own disk is wiped on every deploy and every restart. With no DATABASE_URL
+ *   it falls back to data.json next to this file, which is right for running
+ *   on your own machine and WRONG for App Platform: everybody's account
+ *   disappears the next time the app restarts.
  *
  * DEPLOYING FOR REAL
  *   Put this behind nginx or Caddy with HTTPS so the game reaches it at
@@ -41,6 +44,8 @@ const PORT = process.env.PORT || 8080;
 const ORIGIN = process.env.ORIGIN || '*';          // set to your site in production
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
+const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
+const BUILD = 'arena-v4';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -98,9 +103,21 @@ function latestBackup() {
 }
 // A dated copy on every boot and every hour, keeping the last 30. Cheap
 // insurance against the one mistake that loses everyone's progress.
-function backup(reason) {
+async function backup(reason) {
+  if (!Object.keys(DB.users).length) return;
+  if (dbReady) {
+    try {
+      const name = 'backup:' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      await dbQuery('INSERT INTO ridgeline_store (k, v) VALUES ($1, $2) ON CONFLICT (k) DO NOTHING', [name, JSON.stringify(DB)]);
+      await dbQuery(`DELETE FROM ridgeline_store WHERE k LIKE 'backup:%' AND k NOT IN
+                     (SELECT k FROM ridgeline_store WHERE k LIKE 'backup:%' ORDER BY k DESC LIMIT 30)`);
+      const b = await dbQuery("SELECT count(*)::int n FROM ridgeline_store WHERE k LIKE 'backup:%'");
+      dbBackups = b.rows[0].n;
+      console.log(`[data] backup saved (${reason}) — ${Object.keys(DB.users).length} accounts, ${dbBackups} kept`);
+    } catch (e) { console.error('[data] backup failed', e.message); }
+    return;
+  }
   try {
-    if (!Object.keys(DB.users).length) return;
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     const name = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.json';
     fs.writeFileSync(path.join(BACKUP_DIR, name), JSON.stringify(DB));
@@ -109,24 +126,85 @@ function backup(reason) {
     console.log(`[data] backup written (${reason}) — ${Object.keys(DB.users).length} accounts`);
   } catch (e) { console.error('[data] backup failed', e); }
 }
-let saveTimer = null;
+// ---------------------------------------------------------------- database
+// A host like App Platform gives every deploy a brand new, empty disk. Anything
+// written to a file there is gone the next time the app restarts, which is why
+// accounts have to live somewhere outside the container.
+let pool = null, dbReady = false, dbBackups = 0;
+async function dbQuery(sql, args) { return pool.query(sql, args); }
+async function dbConnect() {
+  if (!DATABASE_URL) return false;
+  let pg;
+  try { pg = require('pg'); }
+  catch (e) { console.error('[data] DATABASE_URL is set but the "pg" package is not installed. Run: npm install pg'); process.exit(1); }
+  const local = /@(localhost|127\.0\.0\.1)[:/]/.test(DATABASE_URL);
+  pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: local ? false : { rejectUnauthorized: false }, max: 4 });
+  await dbQuery('CREATE TABLE IF NOT EXISTS ridgeline_store (k text PRIMARY KEY, v jsonb NOT NULL, updated timestamptz NOT NULL DEFAULT now())');
+  const r = await dbQuery('SELECT v FROM ridgeline_store WHERE k = $1', ['db']);
+  if (r.rows.length && r.rows[0].v && r.rows[0].v.users) {
+    DB = Object.assign(DB, r.rows[0].v); migrate();
+    console.log(`[data] loaded ${Object.keys(DB.users).length} accounts from Postgres (schema v${DB.schema})`);
+  } else if (Object.keys(DB.users).length) {
+    // First run against a database, with accounts still on the old disk: carry them over.
+    console.log(`[data] moving ${Object.keys(DB.users).length} accounts from data.json into Postgres`);
+    await dbWrite();
+  } else {
+    console.log('[data] Postgres is empty — fresh start, no accounts yet');
+  }
+  const b = await dbQuery("SELECT count(*)::int n FROM ridgeline_store WHERE k LIKE 'backup:%'");
+  dbBackups = b.rows[0].n;
+  dbReady = true;
+  return true;
+}
+async function dbWrite() {
+  await dbQuery(`INSERT INTO ridgeline_store (k, v, updated) VALUES ('db', $1, now())
+                 ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated = now()`, [JSON.stringify(DB)]);
+}
+// Refusing to write an empty account list over a populated one is the guard that
+// stops one bad restart from erasing everybody.
+async function safeToWrite() {
+  if (Object.keys(DB.users).length) return true;
+  try {
+    const r = await dbQuery('SELECT v FROM ridgeline_store WHERE k = $1', ['db']);
+    if (r.rows.length && r.rows[0].v && r.rows[0].v.users && Object.keys(r.rows[0].v.users).length) {
+      console.error('[data] refused to overwrite populated accounts with an empty set'); return false;
+    }
+  } catch (e) {}
+  return true;
+}
+let saveTimer = null, writing = false, again = false;
 function persist() {
   if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    // Refuse to clobber a populated file with an empty one — that is exactly
-    // the shape of a bug that erases everybody.
-    try {
-      if (!Object.keys(DB.users).length && fs.existsSync(DATA_FILE)) {
-        const on = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-        if (on && on.users && Object.keys(on.users).length) { console.error('[data] refused to overwrite a populated data.json with an empty one'); return; }
-      }
-    } catch (e) {}
-    const tmp = DATA_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(DB));
-    fs.renameSync(tmp, DATA_FILE);
-  }, 300);
+  saveTimer = setTimeout(() => { saveTimer = null; flush(); }, 300);
 }
+async function flush() {
+  if (writing) { again = true; return; }
+  writing = true;
+  try {
+    if (dbReady) { if (await safeToWrite()) await dbWrite(); }
+    else {
+      try {
+        if (!Object.keys(DB.users).length && fs.existsSync(DATA_FILE)) {
+          const on = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+          if (on && on.users && Object.keys(on.users).length) { console.error('[data] refused to overwrite a populated data.json with an empty one'); return; }
+        }
+      } catch (e) {}
+      const tmp = DATA_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(DB));
+      fs.renameSync(tmp, DATA_FILE);
+    }
+  } catch (e) { console.error('[data] save failed', e.message); }
+  finally { writing = false; if (again) { again = false; flush(); } }
+}
+// The host stops the old container before starting the new one, so take the
+// last few seconds of play with us rather than losing them.
+let goodbye = false;
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => {
+  if (goodbye) return; goodbye = true;
+  clearTimeout(saveTimer); saveTimer = null;
+  try { await flush(); console.log('[data] saved on shutdown'); } catch (e) {}
+  process.exit(0);
+});
 load();
 
 // ---------------------------------------------------------------- accounts
@@ -259,7 +337,8 @@ function analytics() {
   const huntTotals = {};
   for (const d of days) for (const [h, n] of Object.entries(DB.daily[d].hunts)) huntTotals[h] = (huntTotals[h] | 0) + n;
   return {
-    accounts: users.length, premiumAccounts: users.filter(u => u.premium).length, schema: DB.schema, backups: (() => { try { return fs.readdirSync(BACKUP_DIR).length; } catch (e) { return 0; } })(),
+    accounts: users.length, premiumAccounts: users.filter(u => u.premium).length, schema: DB.schema, backups: dbReady ? dbBackups : (() => { try { return fs.readdirSync(BACKUP_DIR).length; } catch (e) { return 0; } })(),
+    storage: dbReady ? 'postgres' : 'file (WIPED ON EVERY RESTART — attach a database)', build: BUILD,
     activeToday: active(1), active7: active(7), active30: active(30),
     totals: DB.totals,
     todayRow: series.find(r => r.date === t) || { date: t, plays: 0, completions: 0, signups: 0, accounts: 0, guests: 0, guestSessions: 0 },
@@ -433,7 +512,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return json(res, 204, {});
   try {
     if (url.pathname === '/' || url.pathname === '/api/status') {
-      return json(res, 200, { ok: true, players: [...rooms.values()].reduce((a, r) => a + realCount(r), 0), rooms: rooms.size, accounts: Object.keys(DB.users).length, payments: !!(STRIPE_KEY && STRIPE_WEBHOOK_SECRET) || !!(PAYPAL_ID && PAYPAL_SECRET) });
+      return json(res, 200, { ok: true, build: BUILD, storage: dbReady ? 'postgres' : 'ephemeral-file', players: [...rooms.values()].reduce((a, r) => a + realCount(r), 0), rooms: rooms.size, accounts: Object.keys(DB.users).length, payments: !!(STRIPE_KEY && STRIPE_WEBHOOK_SECRET) || !!(PAYPAL_ID && PAYPAL_SECRET) });
     }
     if (url.pathname === '/api/register' && req.method === 'POST') {
       if (limited('reg:' + ip, 5, 3600e3)) return json(res, 429, { error: 'Too many sign-ups from this address. Try later.' });
@@ -1419,8 +1498,29 @@ setInterval(() => {
   for (const [tok, t] of Object.entries(DB.tokens)) if (now - t.at > 30 * 86400e3) delete DB.tokens[tok];
 }, 60e3);
 
-backup('boot');
-setInterval(() => backup('hourly'), 3600e3);
+// Connect to the database BEFORE accepting a single player. Starting up with an
+// empty account list and taking sign-ins is how people lose their progress.
+(async () => {
+  if (DATABASE_URL) {
+    for (let tries = 1; ; tries++) {
+      try { await dbConnect(); break; }
+      catch (e) {
+        console.error(`[data] database not reachable (attempt ${tries}): ${e.message}`);
+        if (tries >= 6) { console.error('[data] giving up — restarting rather than running without accounts'); process.exit(1); }
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+  } else {
+    console.error('\n  ⚠  DATABASE_URL is not set. Accounts are being written to a file inside');
+    console.error('     the container. On DigitalOcean App Platform that file is DELETED every');
+    console.error('     time the app deploys or restarts, so everyone has to sign up again.');
+    console.error('     Attach a database to the app and this fixes itself.\n');
+  }
+  await backup('boot');
+  setInterval(() => backup('hourly'), 3600e3);
+  startListening();
+})();
+function startListening() {
 server.listen(PORT, () => {
   console.log(`Ridgeline Season server on port ${PORT}`);
   // Say plainly what is not yet locked down, rather than failing quietly.
@@ -1433,5 +1533,7 @@ server.listen(PORT, () => {
   if (warn.length) { console.log('\n  ⚠  Before taking this live:'); for (const w of warn) console.log('     - ' + w); console.log(''); }
   console.log(`  Game connects to:  ws://localhost:${PORT}   (wss:// behind HTTPS)`);
   console.log(`  API / status:      http://localhost:${PORT}/api/status`);
-  console.log(`  Accounts on disk:  ${DATA_FILE}`);
+  console.log(`  Accounts stored:   ${dbReady ? 'Postgres (safe across deploys)' : DATA_FILE + '  ⚠ lost on restart'}`);
+  console.log(`  Build:             ${BUILD}`);
 });
+}
