@@ -1261,7 +1261,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v5';   // bump this whenever you change the policy
+const BUILD = 'arena-v7';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1745,7 +1745,7 @@ class WebSocketAdapter{
   constructor(url,room,name,mode){ this.url=url; this.room=room; this.name=name; this.mode=mode||'arena';
     this._peers=[]; this.map={}; this.onEvent=null; this.acc=0; this.lastMsg=0; this.retryT=0; this.closed=false; }
   _wire(ws,onWelcome){
-    ws.onopen=()=>ws.send(JSON.stringify({t:'join',room:this.room,name:this.name,token:save.token||'',mode:this.mode}));
+    ws.onopen=()=>ws.send(JSON.stringify({t:'join',room:this.room,name:this.name,token:save.token||'',mode:this.mode,resume:this.resumeKey||''}));
     ws.onclose=()=>{ if(!this.closed)this._dropped(); };
     ws.onerror=()=>{};
     ws.onmessage=e=>{ let m; try{ m=JSON.parse(e.data); }catch(err){ return; }
@@ -1756,7 +1756,7 @@ class WebSocketAdapter{
         if(m.t==='welcome'){ this.id=m.id;
           this._peers=(m.players||[]).filter(p=>p.id!==m.id).map((p,i)=>({...p,color:p.color||RIVAL_COLORS[i%RIVAL_COLORS.length],x:0,z:0,yaw:0,tx:0,tz:0,score:0,kills:0,firing:0,bob:0}));
           this.map={}; for(const p of this._peers)this.map[p.id]=p;
-          this.auth=!!m.authoritative; this.guest=!!m.guest; this.build=m.build||''; if(m.seconds)matchSeconds=m.seconds;
+          this.auth=!!m.authoritative; this.guest=!!m.guest; this.build=m.build||''; if(m.resume)this.resumeKey=m.resume; if(m.seconds)matchSeconds=m.seconds;
           if(onWelcome)onWelcome({seed:m.seed>>>0,you:m.id,auth:this.auth,guest:this.guest,build:this.build,resumed:!!m.resumed}); }
         else if(m.t==='warmup'){ if(this.onEvent)this.onEvent({t:'warmup',seconds:m.seconds,players:m.players,defense:!!m.defense,team:m.team}); }
         else if(['wave','break','hp','down','revived','secondwind','over','bought','respawn','mauledDown','eliminated','final'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
@@ -1794,7 +1794,10 @@ class WebSocketAdapter{
   retry(){
     if(this.closed)return;
     let ws; try{ ws=new WebSocket(this.url); }catch(e){ return; }
-    this.ws=ws; this._wire(ws,()=>{ this.lastMsg=nowMs(); netBack(); });
+    this.ws=ws; this._wire(ws,()=>{ this.lastMsg=nowMs(); netBack();
+      // We kept walking while the connection was away; tell the server where we
+      // actually are, or the first shot back is thrown away as a mismatch.
+      this.emit({t:'state',x:+P.x.toFixed(2),z:+P.z.toFixed(2),yaw:+P.yaw.toFixed(2),score:score,kills:0,firing:false}); });
   }
   tick(dt,self){ this.acc+=dt;
     // Nothing from the server for a couple of seconds means the socket is gone
@@ -1810,7 +1813,11 @@ class WebSocketAdapter{
       const moved=Math.hypot(p.x-ox,p.z-oz); p.bob+=moved*2.2; p.firing=Math.max(0,p.firing-dt); } }
   emit(ev){ if(this.ws&&this.ws.readyState===1)this.ws.send(JSON.stringify(ev)); }
   peers(){ return this._peers; }
-  stop(){ this.closed=true; try{ this.ws&&this.ws.close(); }catch(e){} this._peers=[]; this.map={}; }
+  stop(){ this.closed=true;
+    // Say we are leaving on purpose, so the server frees the place straight
+    // away instead of holding it open for a reconnect that is never coming.
+    try{ if(this.ws&&this.ws.readyState===1)this.ws.send(JSON.stringify({t:'leave'})); }catch(e){}
+    try{ this.ws&&this.ws.close(); }catch(e){} this._peers=[]; this.map={}; }
 }
 // Server-owned animals. We keep a local object per id so the existing
 // drawAnimal code renders them, and smooth toward the server's position.
@@ -1826,7 +1833,11 @@ function applyRemoteAnimals(list){
     a.hpFrac=r.hp==null?1:r.hp; if(r.hf!=null)a.predHp=r.hf;
     const st=r.st==='d'?'dead':r.st==='f'?'flee':r.st==='w'?'walk':r.st==='g'?'graze':'graze';
     if(st==='dead'&&a.state!=='dead'){a.deadT=0;} a.state=st; }
-  for(const [id,a] of remoteAnimals){ if(!seen.has(id))remoteAnimals.delete(id); }
+  const tnow=nowMs();
+  for(const [id,a] of remoteAnimals){
+    if(seen.has(id)){ a.seenAt=tnow; continue; }
+    if(!a.seenAt)a.seenAt=tnow;
+    if(tnow-a.seenAt>2000)remoteAnimals.delete(id); }
   animals=[...remoteAnimals.values()];
 }
 function tickRemoteAnimals(dt){
@@ -2549,6 +2560,18 @@ function applyHit(a,zone,d,p){
   a.state='flee'; a.t=rnd(7,10); a.heading=angleToPlayer(a)+Math.PI+rnd(-.4,.4); sfxHit(false);
   callout={text:'Wounded — '+sp.name, sub:(zone==='leg'?'Leg hit':'Body hit')+'  ·  follow the blood trail', c:'#e0b45a', t:2.5};
 }
+// How far a shot can wander from where you put the crosshair, in radians.
+// At 100 m, 0.006 is about half a metre — inside a deer. The old value was
+// 0.02, which is two metres: a perfectly aimed shot that misses, and no way
+// for the player to tell why. Standing still and steady is now rewarded, and
+// firing on the move is what costs you.
+function aimSpread(){
+  let s=weapon==='rifle'?(scoped?.0014:.006):(scoped?.003:.010);
+  if(breathHold&&scoped)s*=.4;
+  if(P.speed>=0.1)s*=2.2;            // shooting on the move
+  if(P.stamina<35)s*=1.6;            // out of breath
+  return s;
+}
 function fire(){
   if(DEF.on&&DEF.down)return;
   if(mode==='arena'&&(ARENA.dead||ARENA.out))return;
@@ -2560,14 +2583,14 @@ function fire(){
       P.pitch=clamp(P.pitch+.04*(scoped?.6:1),-.7,.7); }
     else { if(arrowsLeft<=0){ sfxClick(0,900); return; } arrowsLeft--; sfxBow(); recoil=.4; }
     stats.shots++;
-    const puff=P.stamina<35?2:1, spread=(weapon==='rifle'?(scoped?.0025:.02):(scoped?.004:.015))*(breathHold&&scoped?.35:1)*(P.speed<0.1?.7:1)*puff;
+    const spread=aimSpread();
     NETA.emit({t:'shot',weapon,x:+P.x.toFixed(2),z:+P.z.toFixed(2),yaw:+(P.yaw+swayY+rnd(-spread,spread)).toFixed(4),pitch:+(P.pitch+swayP+rnd(-spread,spread)).toFixed(4),magnum:!!upg('rifle'),bowSpeed:upg('bow')?78:58});
     return; }
   if(weapon==='rifle'){
     if(ammo<=0){ sfxClick(0,1400); return; }
     ammo--; stats.shots++; sfxShot(); flash=.08; recoil=1;
     for(let i=0;i<12;i++)particles.push({x:cx+W*.07,y:H*.53,vx:rnd(-40,40)-60,vy:rnd(-90,-20),life:rnd(.6,1.4),c:'#c9c4b6',sz:rnd(6,16),smoke:true});
-    const puff=P.stamina<35?2:1, spread=(scoped?.0025:.02)*(breathHold&&scoped?.35:1)*(P.speed<0.1?.7:1)*puff;
+    const spread=aimSpread();
     const mx=cx+Math.tan(rnd(-spread,spread))*f, my=H/2+Math.tan(rnd(-spread,spread))*f;
     const list=animals.filter(a=>a.state!=='dead'&&a.state!=='gone').map(a=>({a,p:project(a.x,a.z,0)})).filter(o=>o.p).sort((u,v)=>u.p.zr-v.p.zr);
     let hit=null;
@@ -2587,7 +2610,7 @@ function fire(){
   } else {
     if(arrowsLeft<=0){ sfxClick(0,900); callout={text:'Quiver empty',sub:'',c:'#f1ebdc',t:1.2}; return; }
     arrowsLeft--; stats.shots++; sfxBow(); recoil=.4;
-    const spd=(upg('bow')?78:58)*(1+Math.min(.25,(sLv('arch')-1)*.008)), puff=P.stamina<35?2:1, sp=(scoped?.004:.015)*(breathHold&&scoped?.4:1)*puff;
+    const spd=(upg('bow')?78:58)*(1+Math.min(.25,(sLv('arch')-1)*.008)), sp=aimSpread();
     const yaw=P.yaw+swayY+rnd(-sp,sp), pitch=P.pitch+swayP+rnd(-sp,sp);
     arrows.push({x:P.x,z:P.z,y:camAlt-.1,vx:Math.sin(yaw)*Math.cos(pitch)*spd,vz:Math.cos(yaw)*Math.cos(pitch)*spd,vy:Math.sin(pitch)*spd,t:0});
     spook(14,1.2);
@@ -3049,6 +3072,23 @@ function drawControls(){
   });
   ctx.restore();
 }
+// How wide centred HUD text may be. On a short landscape screen the scoreboard
+// runs down the left and the score sits on the right, so anything centred has
+// to keep out of both — otherwise the lines cross each other.
+function centreMaxW(){ return H<520?Math.min(W-44,W*.52):W-44; }
+// Break a line so it fits the screen, on word boundaries where it can.
+function wrapText(str,max){
+  if(!str)return [];
+  if(ctx.measureText(str).width<=max)return [str];
+  const words=String(str).split(' '), out=[]; let line='';
+  for(const w of words){
+    const t=line?line+' '+w:w;
+    if(ctx.measureText(t).width>max&&line){ out.push(line); line=w; } else line=t;
+    if(out.length>=2)break;
+  }
+  if(line&&out.length<3)out.push(line);
+  return out.slice(0,W<620?2:3);
+}
 function drawHUD(){
   ctx.textBaseline='alphabetic'; ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=6;
   const m=Math.floor(timeLeft/60), s=Math.floor(timeLeft%60), fs=Math.round((TOUCH_UI?22:30)*HUDS);
@@ -3091,8 +3131,15 @@ function drawHUD(){
     ctx.fillStyle='rgba(241,235,220,.6)';
     const tagNames=LV.tags.map(k=>SP[k].name.split(' ').pop()).join(', ');
     const selfDef=LV.bears&&!LV.tags.includes('bear');
-    if(W<620){ ctx.font='11px Trebuchet MS,sans-serif'; ctx.fillText('Tags: '+tagNames,22,oy+3);
-      if(selfDef)ctx.fillText('+ anything attacking you',22,oy+17); }
+    // On a short landscape screen the long single line reached across into the
+    // middle of the view, where the callouts are. Keep the left column narrow.
+    if(W<620||H<520){ ctx.font='11px Trebuchet MS,sans-serif';
+      // On a short screen there is no room for a second line before the buttons,
+      // so self-defence is folded into the tag line instead of sitting under it.
+      const short=H<520;
+      const tl=wrapText('Tags: '+tagNames+(selfDef&&short?'  + self-defence':''),Math.min(W*.38,300));
+      tl.forEach((ln,i)=>ctx.fillText(ln,22,oy+3+i*14));
+      if(selfDef&&!short)ctx.fillText('+ anything attacking you',22,oy+3+tl.length*14); }
     else ctx.fillText('Tags: '+tagNames+(selfDef?' (+ any animal attacking you)':''),22,oy+3); }
   // ammo / weapon (bottom-left on desktop, bottom-center on touch)
   const portrait=TOUCH_UI&&H>W;
@@ -3123,14 +3170,21 @@ function drawHUD(){
   let coBottom=0;
   if(callout){ let coY=(W<620&&mode==='hunt'&&LV)?Math.max(H*.20,fs+172):(W<620&&mode==='arena'&&!DEF.on)?Math.max(H*.2,fs+140):H*.2; if(finalOn)coY=Math.max(coY,finalBottom+22); coBottom=coY+28;
     ctx.globalAlpha=Math.min(1,callout.t);
-    ctx.font=`bold ${W<620?20:24}px Georgia,serif`; ctx.fillStyle=callout.c; ctx.fillText(callout.text,cx,coY);
-    ctx.font=`${W<620?12:14}px Trebuchet MS,sans-serif`; ctx.fillStyle='#f1ebdc'; ctx.fillText(callout.sub,cx,coY+24);
+    ctx.font=`bold ${W<620?20:24}px Georgia,serif`; ctx.fillStyle=callout.c;
+    const tl=wrapText(callout.text,centreMaxW()); ctx.fillText(tl[0]||'',cx,coY);
+    ctx.font=`${W<620?12:14}px Trebuchet MS,sans-serif`; ctx.fillStyle='#f1ebdc';
+    // A long line of explanation ran off the side of a phone. Break it to fit.
+    const lines=wrapText(callout.sub||'',centreMaxW());
+    lines.forEach((ln,i)=>ctx.fillText(ln,cx,coY+24+i*16));
+    coBottom=coY+24+Math.max(0,lines.length-1)*16+12;
     ctx.globalAlpha=1; }
   if(warn&&!(mode==='arena'&&(ARENA.dead||ARENA.out||DEF.down))){ const narrow=W<620;
     const wy=Math.max(narrow?Math.min(H*.50,H-210):H*.32,coBottom+22);
     ctx.globalAlpha=Math.min(1,warn.t); ctx.font=`bold ${narrow?17:22}px Georgia,serif`;
     ctx.fillStyle=warn.text.startsWith('BEAR')?'#ff3b1f':'#f1ebdc';
-    ctx.fillText(warn.text,cx,wy); ctx.globalAlpha=1; }
+    const wl=wrapText(warn.text,centreMaxW());
+    wl.forEach((ln,i)=>ctx.fillText(ln,cx,wy+i*(narrow?19:24)));
+    ctx.globalAlpha=1; }
   for(const fl of floaters){ ctx.globalAlpha=Math.min(1,fl.t); ctx.fillStyle='#ff6a13'; ctx.font='bold 22px Georgia,serif'; ctx.fillText(fl.text,fl.x,fl.y-(1.6-fl.t)*40); ctx.globalAlpha=1; }
   if(hitMark>0){
     // vital: a red X that blooms outward. wound: a small orange tick. leg/graze: white.
@@ -3145,10 +3199,15 @@ function drawHUD(){
     ctx.fillStyle='rgba(241,235,220,.75)'; ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillText('WASD / arrows to move · arrows or mouse-to-screen-edge to keep turning · click to lock the mouse',cx,H-8);
   }
   // kill feed (top right, under the score)
-  if(killFeed.length){ ctx.textAlign='right'; ctx.font='12px Trebuchet MS,sans-serif';
+  // On a small screen the callout and the feed want the same few centimetres.
+  // The callout is the newer, louder version of the same news, so it wins and
+  // the feed sits the moment out rather than being drawn through it.
+  const feedRoom=!(callout&&(H<560||W<620));
+  if(killFeed.length&&feedRoom){ ctx.textAlign='right'; ctx.font='12px Trebuchet MS,sans-serif';
     const narrow=(W<620&&mode==='hunt'&&LV)||(W<480&&mode==='arena');
     const teamPush=DEF.on&&DEF.team.length&&W<900&&!(TOUCH_UI&&W>H);
     let ky=narrow?fs+218:(teamPush?fs+58+DEF.team.length*15+10:fs+52);
+    if(coBottom&&H>=560&&W>=620)ky=Math.max(ky,coBottom+16);
     const maxRows=TOUCH_UI?2:5;
     let shown=0;
     for(const k of killFeed){
@@ -3316,7 +3375,8 @@ function frame(now){
       const y=harvestYield(a); let parts=[];
       for(const k in y){ invAdd(k,y[k]); parts.push((y[k]>1?y[k]+' ':'')+MATS[k].name.toLowerCase()); }
       persist();
-      score+=Math.round(SP[a.sp].pts*.15); addSkill('track',40); contractProgress('harvest',null,1);
+      if(!arenaAuth)score+=Math.round(SP[a.sp].pts*.15);   // online, the server decides and tells us
+      addSkill('track',40); contractProgress('harvest',null,1);
       if(mode==='chal'&&CHAL&&CHAL.id==='tagged')chalScore++;
       if(arenaAuth&&NETA&&a.id)NETA.emit({t:'tag',id:a.id});
       callout={text:'Harvested — '+SP[a.sp].name,sub:parts.join(', ')+'  ·  sell or craft at the lodge',c:'#7cff5a',t:3};
@@ -4020,7 +4080,9 @@ function onNetEvent(ev){
   if(ev.t==='shotResult'){ if(!ev.ok){
       const warming=/warm/i.test(ev.why||'');
       callout={text:warming?'Not yet':'Shot rejected',sub:ev.why||'',c:'#e0b45a',t:1.5}; return; }
-    if(!ev.hit){ callout={text:'Miss',sub:'',c:'#f1ebdc',t:1.2}; return; }
+    if(!ev.hit){ const n=ev.near;
+      callout={text:'Miss',sub:n?(n.by+' m '+n.where+' of the '+(SP[n.sp]?SP[n.sp].name.toLowerCase():'animal')+' at '+n.dist+' m'):'nothing out there',c:'#f1ebdc',t:1.6};
+      return; }
     stats.hits++; hitMark=.35; hitKind=ev.hit.killed?'kill':(ev.hit.zone==='vital'||ev.hit.zone==='body')?'wound':'graze'; if(ev.hit.killed)killKick=.5;
     const a=remoteAnimals.get(ev.hit.id); if(a){ a.hurtT=.3; const pp=project(a.x,a.z,0); if(pp){ const n=ev.hit.killed?20:10; for(let i=0;i<n;i++)particles.push({x:pp.sx,y:pp.gy-pp.s*SP[a.sp].k*SP[a.sp].bodyY,vx:rnd(-1.4,1.4)*pp.s*1.6,vy:rnd(-1.8,.4)*pp.s,life:rnd(.35,.9),c:i%3?'#8a0f0f':'#c41d1d',sz:Math.max(1.5,pp.s*.07)}); } }
     const spn=a?SP[a.sp].name:'animal';
@@ -4068,8 +4130,11 @@ function onNetEvent(ev){
     return; }
   if(ev.t==='start'){ if(arenaEnded||mode!=='arena')return; warmup=0; timeLeft=ev.seconds; score=0; stats.kills={}; stats.shots=0; stats.hits=0; ARENA={lives:3,out:false,dead:false,deadT:0,finalT:0,leader:null}; arenaEnded=false; running=true; warn={text:'GO',t:2}; tone(880,.18,.2,'triangle'); tone(1320,.3,.2,'triangle',.12); return; }
   if(ev.t==='end'){ endArena(ev.board); return; }
-  if(ev.t==='error'){ callout={text:ev.message||'Server error',sub:'',c:'#ff3b1f',t:3}; return; }
-  if(ev.t==='tagged'){ score=ev.score; pushFeed('Tagged — '+ev.tags+' this match','','#7cff5a'); return; }
+  if(ev.t==='error'){ callout={text:'Server',sub:ev.message||'Server error',c:'#ff3b1f',t:4};
+    if(ev.message)setTxt('netStatus','⚠ '+ev.message); return; }
+  if(ev.t==='tagged'){
+    if(ev.ok===false){ callout={text:'Not your animal',sub:ev.why||'',c:'#e0b45a',t:2}; return; }
+    score=ev.score; pushFeed('Tagged — '+ev.tags+' this match','','#7cff5a'); return; }
   if(ev.t==='feed'){ pushFeed(ev.name+' '+ev.text,'','#d8d0b8'); return; }
   if(ev.t==='kill'){ pushFeed(ev.name+' took a '+(ev.species||'animal').toLowerCase(),'+'+ev.points,'#d8d0b8'); const a=remoteAnimals.get(ev.animal); if(a){a.state='dead';a.deadT=0;} return; }
   if(ev.t==='joined')pushFeed(ev.name+' joined the arena','','#7cff5a');
