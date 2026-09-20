@@ -45,7 +45,7 @@ const ORIGIN = process.env.ORIGIN || '*';          // set to your site in produc
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v5';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v7';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -805,7 +805,10 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { json(res, 400, { error: e.message }); }
 });
 
-// ---------------------------------------------------------------- arena: species (mirrors the client)
+// ---------------------------------------------------------------- arena: species
+// These numbers MUST match the client's SP table exactly. The player aims at the
+// animal they can see, so if the server's idea of its size differs, shots that
+// look perfect are judged as misses. Bear and lion had drifted apart.
 const SP = {
   deer:  { k: 1.15, rx: .7, ry: .28, bodyY: .82, hp: 1,   pts: 100, flee: 7.5, weight: 34, antlers: true },
   boar:  { k: 1.05, rx: .7, ry: .33, bodyY: .6,  hp: 1.5, pts: 150, flee: 8.5, weight: 20, antlers: false },
@@ -813,8 +816,8 @@ const SP = {
   moose: { k: 1.85, rx: .72, ry: .32, bodyY: .9, hp: 2.5, pts: 400, flee: 6,   weight: 7,  antlers: true },
   sheep: { k: 1.1,  rx: .62, ry: .29, bodyY: .75, hp: 1.2, pts: 320, flee: 8,  weight: 8,  antlers: true },
   // predators — only ever spawned by Ridge Defense
-  bear:  { k: 1.5,  rx: .75, ry: .40, bodyY: .90, hp: 6,   pts: 210, flee: 0,   weight: 0,  antlers: false, pred: true, charge: 7.2, bite: 13, reach: 2.6 },
-  lion:  { k: 1.2,  rx: .60, ry: .28, bodyY: .72, hp: 3.6, pts: 170, flee: 0,   weight: 0,  antlers: false, pred: true, charge: 9.6, bite: 8,  reach: 2.2 },
+  bear:  { k: 1.35, rx: .85, ry: .42, bodyY: .85, hp: 6,   pts: 210, flee: 0,   weight: 0,  antlers: false, pred: true, charge: 7.2, bite: 13, reach: 2.6 },
+  lion:  { k: 1.15, rx: .75, ry: .28, bodyY: .72, hp: 3.6, pts: 170, flee: 0,   weight: 0,  antlers: false, pred: true, charge: 9.6, bite: 8,  reach: 2.2 },
 };
 const SPK = Object.keys(SP).filter(k => !SP[k].pred);   // spawnAnimal never picks a predator
 const TAU = Math.PI * 2;
@@ -876,7 +879,7 @@ function resolveShot(room, p, m) {
   const yaw = +m.yaw, pitch = Math.max(-.7, Math.min(.7, +m.pitch || 0));
   if (!Number.isFinite(yaw)) return { ok: false, why: 'bad aim' };
   spook(room, p.x, p.z, weapon === 'bow' ? 14 : 150);
-  let best = null;
+  let best = null, near = null;
   for (const a of room.animals) {
     if (a.state === 'dead') continue;
     const s = SP[a.sp], dx = a.x - p.x, dz = a.z - p.z, dist = Math.hypot(dx, dz);
@@ -893,12 +896,19 @@ function resolveShot(room, p, m) {
     else if (lateral < s.rx * s.k && h < cy - s.ry * s.k && h > 0) zone = 'leg';
     else if (lateral < s.rx * s.k * .6 && h > cy + s.ry * s.k && h < cy + s.ry * s.k + .6 * s.k) zone = 'head';
     if (zone && (!best || dist < best.dist)) best = { a, zone, dist };
+    // remember the nearest thing we did NOT hit, and by how much, so a miss can
+    // tell the player what went wrong instead of just saying "miss"
+    const off = Math.hypot(lateral, h - cy);
+    if (!near || off < near.off) near = { off, side: dyaw > 0 ? 'right' : 'left', lateral,
+                                          high: h > cy, vert: Math.abs(h - cy), dist, sp: a.sp };
   }
-  if (!best) return { ok: true, hit: null };
+  if (!best) return { ok: true, hit: null, near: near && near.off < 6 ? {
+    by: +near.off.toFixed(1), dist: Math.round(near.dist), sp: near.sp,
+    where: near.vert > near.lateral ? (near.high ? 'high' : 'low') : near.side } : null };
   if (best.a.pred && room.mode !== 'defense') {      // a roaming arena bear is worth real points
     const a = best.a; a.hp -= best.zone === 'vital' || best.zone === 'head' ? 3 : 1.2;
     if (a.hp > 0) return { ok: true, hit: { id: a.id, zone: best.zone, dist: best.dist, killed: false } };
-    a.state = 'dead'; a.deadT = 0; a.speed = 0;
+    a.state = 'dead'; a.deadT = 0; a.speed = 0; a.lead = false; a.leadT = 0; a.by = p.id;
     const pts = Math.round(SP.bear.pts * 3 * (1 + best.dist / 100));
     p.score += pts; p.kills++;
     setTimeout(() => { if (rooms.has(room.name) && room.running) { room.animals = room.animals.filter(x => x.id !== a.id); const b = spawnPredator(room, Math.random() < .45 ? 'lion' : 'bear', 1); b.roamer = true; b.cool = 2; room.animals.push(b); } }, 5000);
@@ -910,7 +920,7 @@ function resolveShot(room, p, m) {
   const dmg = zone === 'vital' ? 10 : zone === 'head' ? (weapon === 'rifle' ? 10 : 3) : zone === 'body' ? (weapon === 'rifle' ? (magnum ? 2.2 : 1.2) : .9) : .5;
   a.hp -= dmg;
   if (a.hp > 0) { a.state = 'flee'; a.t = rnd(6, 9); a.wounded = true; return { ok: true, hit: { id: a.id, zone, dist, killed: false } }; }
-  a.state = 'dead'; a.deadT = 0; a.speed = 0;
+  a.state = 'dead'; a.deadT = 0; a.speed = 0; a.by = p.id;
   const bonus = zone === 'vital' ? 2 : zone === 'head' ? 1.4 : 1;
   const pts = Math.round(s.pts * (1 + dist / 100) * bonus * (weapon === 'bow' ? 1.6 : 1) * (a.trophy ? 2 : 1));
   p.score += pts; p.kills++;
@@ -1044,6 +1054,34 @@ function stepPredator(room, a, dt) {
         tgt = humans[0]; a.tgtId = tgt.id; a.retarget = 6 + Math.random() * 4;
       }
       bd = dist(tgt);
+      // Three animals arriving together is not a fight, it is an ambush with no
+      // answer. Exactly one closes and bites; the others stalk at the edge of
+      // things, circling, and take their turn when it backs off or goes down.
+      const pack = room.animals.filter(o => o.pred && o.roamer && o.state !== 'dead' && o.tgtId === tgt.id);
+      let lead = pack.find(o => o.lead);
+      if (!lead || lead.state === 'dead' || lead.leadT <= 0) {
+        if (lead) { lead.lead = false; lead.holdOff = 8 + Math.random() * 6; }
+        const next = pack.filter(o => o !== lead && (o.holdOff || 0) <= 0)
+                         .sort((o, q) => Math.hypot(o.x - tgt.x, o.z - tgt.z) - Math.hypot(q.x - tgt.x, q.z - tgt.z))[0]
+                  || pack.sort((o, q) => Math.hypot(o.x - tgt.x, o.z - tgt.z) - Math.hypot(q.x - tgt.x, q.z - tgt.z))[0];
+        if (next) { next.lead = true; next.leadT = 14 + Math.random() * 10; lead = next; }
+      }
+      if (a.holdOff > 0) a.holdOff -= dt;
+      if (a.lead) a.leadT -= dt;
+      if (!a.lead) {
+        // stalking: hold at the edge of the fight and circle, so the player can
+        // see it coming and choose which one to deal with
+        const ring = 34 + (a.id % 4) * 9;
+        const to = Math.atan2(tgt.x - a.x, tgt.z - a.z);
+        a.heading += wrap(to - a.heading) * Math.min(1, dt * 1.8);
+        const drift = bd > ring + 6 ? 1 : bd < ring - 6 ? -1 : 0;
+        const v = s.charge * a.spMul * (drift ? .5 : .32);
+        a.speed = Math.abs(v);
+        a.x += Math.sin(a.heading) * v * drift * dt + Math.cos(a.heading) * v * .7 * dt;
+        a.z += Math.cos(a.heading) * v * drift * dt - Math.sin(a.heading) * v * .7 * dt;
+        const rr = Math.hypot(a.x, a.z); if (rr > MAP_R - 10) { a.x *= (MAP_R - 10) / rr; a.z *= (MAP_R - 10) / rr; }
+        return;
+      }
     }
   } else {
     for (const p of room.players.values()) {
@@ -1064,11 +1102,13 @@ function stepPredator(room, a, dt) {
   a.cool = a.sp === 'lion' ? 1.35 : 1.7;
   if (a.roamer) {
     tgt.hp -= a.sp === 'lion' ? 15 : 22;      // five or six bites a life — pressure, not a meat grinder
-    tgt.hurtT = 3;                              // no healing while something has its teeth in you
+    tgt.hurtT = 6;                              // no healing while something has its teeth in you
     send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp, lives: tgt.lives });
     broadcast(room, { t: 'feed', name: tgt.name, text: 'is being worked over by a ' + a.sp }, tgt.id);
     if (tgt.hp <= 0) arenaKillPlayer(room, tgt, a.sp);
-    a.retreatT = 2.2; a.heading += Math.PI; a.cool = 3.5 + Math.random() * 3;
+    a.bites = (a.bites | 0) + 1;
+    a.retreatT = 1.1; a.heading += Math.PI; a.cool = 2.4 + Math.random() * 1.2;
+    if (a.bites >= 3) { a.bites = 0; a.leadT = 0; }   // after a few, it gives way to the next one
     return;
   }
   tgt.hp -= Math.round(s.bite * (1 + .05 * (a.wave - 1)));
@@ -1142,7 +1182,7 @@ function defShot(room, p, m) {
   if (!base.ok || !base.hit) return base;
   const a = base.hit.a;
   if (!a.pred) {                                        // ordinary game still earns a little
-    a.state = 'dead'; a.deadT = 0; a.speed = 0;
+    a.state = 'dead'; a.deadT = 0; a.speed = 0; a.by = p.id;
     const pts = Math.round(SP[a.sp].pts * .25); p.pts = (p.pts | 0) + pts; p.ptsEarned = (p.ptsEarned | 0) + pts; p.kills++;
     setTimeout(() => { if (rooms.has(room.name)) { room.animals = room.animals.filter(x => x.id !== a.id); room.animals.push(spawnAnimal(room)); } }, 5000);
     return { ok: true, hit: { id: a.id, zone: base.hit.zone, dist: base.hit.dist, killed: true, pts, species: a.sp } };
@@ -1152,7 +1192,7 @@ function defShot(room, p, m) {
   const dmg = (zone === 'vital' ? 2.6 : zone === 'head' ? (weapon === 'rifle' ? 2.6 : 1.2) : zone === 'body' ? (m.magnum ? 1.5 : 1.0) : .45) * dmgMul;
   a.hp -= dmg;
   if (a.hp > 0) return { ok: true, hit: { id: a.id, zone, dist: base.hit.dist, killed: false, hpFrac: a.hp / a.hpMax } };
-  a.state = 'dead'; a.deadT = 0; a.speed = 0;
+  a.state = 'dead'; a.deadT = 0; a.speed = 0; a.by = p.id;
   predKilled(room, p, a, zone, base.hit.dist);
   return { ok: true, hit: { id: a.id, zone, dist: base.hit.dist, killed: true, species: a.sp, pts: 0 } };
 }
@@ -1359,7 +1399,13 @@ setInterval(() => {
 wss.on('connection', (ws, req) => {
   ws.isAlive = true; ws.on('pong', () => { ws.isAlive = true; });
   const ip = ipOf(req);
-  if (limited('ws:' + ip, 30, 60e3)) return ws.close();
+  // Whole offices, schools and mobile networks share one address, so the limit
+  // has to allow a crowd arriving together — and when it does bite, say so
+  // instead of dropping the socket silently and leaving the game to guess.
+  if (limited('ws:' + ip, 90, 60e3)) {
+    send(ws, { t: 'error', message: 'Too many connections from your network just now — wait a minute and try again' });
+    return setTimeout(() => { try { ws.close(); } catch (e) {} }, 100);
+  }
   let p = null, room = null;
   ws.on('message', raw => {
     if (raw.length > 2048) return;
@@ -1375,22 +1421,28 @@ wss.on('connection', (ws, req) => {
       if (room.players.size >= cap) { send(ws, { t: 'error', message: 'Room is full' }); return ws.close(); }
       const name = user ? user.name : ('Guest' + (String(m.name || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 10) || nextPid));
       // Coming back from a dropped connection: same person, same match, same score.
+      // Identity has to be proved, not claimed. A signed-in player is already
+      // proved by their token; everyone else gets a one-off key at join and has
+      // to hand it back, otherwise anybody could type a stranger's name and
+      // walk off with their score.
+      const key = String(m.resume || '');
       const held = [...room.players.values()].find(q => q.gone && !q.bot &&
-        (user ? (q.user && q.user.name === user.name) : q.name === name));
+        (user ? (q.user && q.user.name === user.name)
+              : (key && q.resumeKey && q.resumeKey === key)));
       if (held) {
         held.gone = 0; held.ws = ws; held.lastState = Date.now(); held.seen = new Set(); p = held;
-        send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, build: BUILD, resumed: true,
+        send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, build: BUILD, resumed: true, resume: p.resumeKey,
           mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
           players: [...room.players.values()].filter(q => !q.gone).map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
         broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
         console.log(`[net] ${p.name} came back to ${room.name} with ${p.score} points`);
         return;
       }
-      p = { id: 'p' + (nextPid++), name, user, color: COLORS[room.players.size % COLORS.length], ws,
+      p = { id: 'p' + (nextPid++), name, user, resumeKey: crypto.randomBytes(9).toString('hex'), color: COLORS[room.players.size % COLORS.length], ws,
             x: 0, z: 0, yaw: 0, score: 0, kills: 0, tags: 0, trophies: 0, longest: 0, firing: 0, lastShot: -9, lastState: Date.now() };
       if (defense) defPlayerInit(p);
       room.players.set(p.id, p);
-      send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, build: BUILD, mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
+      send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, build: BUILD, resume: p.resumeKey, mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
                  players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
       broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
       if (isDefense(room)) {
@@ -1448,7 +1500,7 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'shot') {
       if (!room.running) return;
       const r = resolveShot(room, p, m);
-      send(ws, { t: 'shotResult', ok: r.ok, why: r.why, hit: r.hit, score: p.score });
+      send(ws, { t: 'shotResult', ok: r.ok, why: r.why, hit: r.hit, near: r.near, score: p.score });
       if (r.hit && r.hit.killed) broadcast(room, { t: 'kill', id: p.id, name: p.name, species: r.hit.species, points: r.hit.pts, animal: r.hit.id }, p.id);
       return;
     }
@@ -1458,11 +1510,25 @@ wss.on('connection', (ws, req) => {
       const a = room.animals.find(x => x.id === (m.id | 0));
       if (!a || a.state !== 'dead' || a.tagged) return;
       if (Math.hypot(a.x - p.x, a.z - p.z) > 6) return;     // must actually be there
+      // Your kill is yours. Without this anyone could jog round the map claiming
+      // everybody else's animals, which in a "most brought in wins" match is the
+      // whole game handed to whoever runs fastest.
+      if (a.by && a.by !== p.id && !isDefense(room)) {
+        send(ws, { t: 'tagged', id: a.id, ok: false, why: 'Not your animal — that one is somebody else\'s' });
+        return;
+      }
       a.tagged = true; p.tags++;
       if (isDefense(room)) { const bonus = Math.round(SP[a.sp].pts * .4 * (a.pred ? (1 + .16 * ((a.wave | 1) - 1)) : .3)); p.pts = (p.pts | 0) + bonus; p.ptsEarned = (p.ptsEarned | 0) + bonus; }
       p.score += Math.round(SP[a.sp].pts * 0.15);
       send(ws, { t: 'tagged', id: a.id, tags: p.tags, score: p.score, pts: p.pts | 0 });
       broadcast(room, { t: 'feed', name: p.name, text: 'tagged a ' + a.sp }, p.id);
+      return;
+    }
+    if (m.t === 'leave') {          // quitting on purpose is not a dropped connection
+      if (p && room) { p.gone = 0; room.players.delete(p.id); broadcast(room, { t: 'left', id: p.id });
+        if (realCount(room) === 0) { room.emptiedAt = Date.now(); room.running = false; }
+        console.log(`[net] ${p.name} left ${room.name}`); p = null; }
+      try { ws.close(); } catch (e) {}
       return;
     }
     if (m.t === 'chat') broadcast(room, { t: 'chat', name: p.name, text: String(m.text || '').slice(0, 120) }, p.id);
@@ -1505,7 +1571,7 @@ setInterval(() => {
       if (room.stockT <= 0) { room.stockT = 1; stockArena(room); }
       // A mauling heals over time if you get away — so shooting a predator or
       // out-running it actually buys you something.
-      for (const p of room.players.values()) if (!p.bot && !p.out && p.hp > 0 && p.hp < p.maxHp) if (p.hurtT > 0) p.hurtT -= dt; else p.hp = Math.min(p.maxHp, p.hp + 4 * dt);
+      for (const p of room.players.values()) if (!p.bot && !p.out && p.hp > 0 && p.hp < p.maxHp) if (p.hurtT > 0) p.hurtT -= dt; else p.hp = Math.min(p.maxHp, p.hp + 2.5 * dt);
       for (const a of room.animals) { if (a.pred) stepPredator(room, a, dt); else updateAnimal(room, a, dt); }
       for (const p of room.players.values()) if (p.bot) stepBot(room, p, dt);
       if (room.timeLeft <= 10 && !room.warned10) { room.warned10 = true; broadcast(room, { t: 'final', seconds: 10 }); }
@@ -1545,6 +1611,12 @@ setInterval(() => {
         for (const a of room.animals) {
           if (Math.abs(a.x - q.x) > 240 || Math.abs(a.z - q.z) > 240) continue;
           now.add(a.id);
+          // Something 200 m off moves a few pixels a second. Update what is close
+          // every time, and everything further out proportionally less often —
+          // spread across ticks by id so it never arrives in a lump.
+          const far = Math.hypot(a.x - q.x, a.z - q.z);
+          const every = far < 70 ? 1 : far < 140 ? 2 : 4;
+          if (every > 1 && (room.animTick + a.id) % every !== 0 && had.has(a.id)) continue;
           const o = { id: a.id, x: +a.x.toFixed(1), z: +a.z.toFixed(1), h: +a.heading.toFixed(2) };
           if (!had.has(a.id)) { o.sp = a.sp; if (a.trophy) o.tr = 1; if (a.male) o.m = 1; if (a.pred) o.pr = 1; }
           if (a.speed) o.v = +a.speed.toFixed(1);
