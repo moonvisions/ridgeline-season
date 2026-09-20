@@ -1261,7 +1261,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v7';   // bump this whenever you change the policy
+const BUILD = 'arena-v8';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -3000,6 +3000,26 @@ function drawCompass(){
   for(const [l,a] of marks){ const d=wrap(a-P.yaw); if(Math.abs(d)<1.1){ const x=cx+d/1.1*w/2; ctx.fillStyle=l.length===1?'#f1ebdc':'rgba(241,235,220,.55)'; ctx.fillText(l,x,y+13); } }
   const sd=wrap(0.9-P.yaw); if(Math.abs(sd)<1.1){ ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.arc(cx+sd/1.1*w/2,y+4,3,0,TAU); ctx.fill(); }
   ctx.fillStyle='#ff6a13'; ctx.fillRect(cx-1,y,2,26);
+  // Whatever is hunting you gets its own mark on the compass, so you can turn
+  // the right way instead of spinning on the spot looking for it.
+  if(mode==='arena'&&running){
+    const n=nearestPredator();
+    if(n&&n.d<140){ const pd=wrap(Math.atan2(n.a.x-P.x,n.a.z-P.z)-P.yaw);
+      ctx.save();
+      ctx.fillStyle=n.a.sp==='lion'?'#ffb03b':'#ff3b2f';
+      if(Math.abs(pd)<1.1){ const px=cx+pd/1.1*w/2;
+        ctx.beginPath(); ctx.moveTo(px,y-8); ctx.lineTo(px-5,y-1); ctx.lineTo(px+5,y-1); ctx.closePath(); ctx.fill();
+        ctx.font='bold 9px Trebuchet MS,sans-serif'; ctx.textAlign='center';
+        ctx.fillText(Math.round(n.d)+'m',px,y-11);
+      } else {
+        // off the edge of the compass: an arrow at whichever side it is on
+        const px=pd>0?cx+w/2+9:cx-w/2-9;
+        ctx.beginPath();
+        if(pd>0){ ctx.moveTo(px+6,y+13); ctx.lineTo(px-3,y+7); ctx.lineTo(px-3,y+19); }
+        else { ctx.moveTo(px-6,y+13); ctx.lineTo(px+3,y+7); ctx.lineTo(px+3,y+19); }
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore(); } }
   // nearest spent arrow, so you can walk back and collect it
   if(weapon==='bow'&&stuck.length){ let best=null,bd2=1e9;
     for(const q of stuck){ const d=Math.hypot(q.x-P.x,q.z-P.z); if(d<bd2){bd2=d;best=q;} }
@@ -3088,6 +3108,32 @@ function wrapText(str,max){
   }
   if(line&&out.length<3)out.push(line);
   return out.slice(0,W<620?2:3);
+}
+// Anything hunting you that you cannot see should still be something you can
+// hear and be told about. This watches the predators around the player and
+// makes them audible and legible before they reach you.
+let growlT=0, behindT=0;
+function nearestPredator(){
+  let best=null,bd=1e9;
+  for(const a of animals){ if(!a.pred||a.state==='dead'||a.state==='gone')continue;
+    const d=Math.hypot(a.x-P.x,a.z-P.z); if(d<bd){bd=d;best=a;} }
+  return best?{a:best,d:bd}:null;
+}
+function updateThreats(dt){
+  if(mode!=='arena'||!running){ growlT=0; behindT=0; return; }
+  const n=nearestPredator(); if(!n)return;
+  // a growl that gets more frequent the closer it gets
+  growlT-=dt;
+  if(n.d<45&&growlT<=0){ growlT=n.d<18?1.6:n.d<30?2.6:4;
+    const v=Math.max(.08,.34*(1-n.d/45));
+    tone(n.a.sp==='lion'?150:70,.55,v,'sawtooth'); }
+  // and a shout if it is close and not in front of you
+  behindT-=dt;
+  const ang=Math.abs(wrap(Math.atan2(n.a.x-P.x,n.a.z-P.z)-P.yaw));
+  if(n.d<26&&ang>1.1&&behindT<=0){ behindT=3.4;
+    const side=wrap(Math.atan2(n.a.x-P.x,n.a.z-P.z)-P.yaw)>0?'RIGHT':'LEFT';
+    warn={text:(n.a.sp==='lion'?'LION':'BEAR')+(ang>2.2?' BEHIND YOU':' ON YOUR '+side),t:1.6};
+    if(!callout||callout.t<.6)callout={text:'Turn around',sub:Math.round(n.d)+' m and closing',c:'#ff4d3d',t:1.4}; }
 }
 function drawHUD(){
   ctx.textBaseline='alphabetic'; ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=6;
@@ -3313,9 +3359,16 @@ function drawMinimap(){
   ctx.strokeStyle='rgba(241,235,220,.5)'; ctx.lineWidth=2; ctx.stroke();
   const rel=(x,z)=>{ const dx=(x-P.x)*scale, dz=(z-P.z)*scale, c=Math.cos(-P.yaw), sn=Math.sin(-P.yaw);
     return [mx+(dx*c-dz*sn), my-(dx*sn+dz*c)]; };
-  ctx.fillStyle='rgba(200,200,190,.55)';
   for(const a of animals){ if(a.state==='dead'||a.state==='gone')continue; const d=Math.hypot(a.x-P.x,a.z-P.z); if(d>MAP_R)continue;
-    const [x,y]=rel(a.x,a.z); ctx.beginPath(); ctx.arc(x,y,1.6,0,TAU); ctx.fill(); }
+    const [x,y]=rel(a.x,a.z);
+    if(a.pred){
+      // everything that hunts you is red, bigger, and beats faster as it closes
+      const pulse=1+Math.sin(time*(d<30?9:4))*(d<30?.45:.2);
+      ctx.fillStyle=a.sp==='lion'?'#ffb03b':'#ff3b2f';
+      ctx.beginPath(); ctx.arc(x,y,3.4*pulse,0,TAU); ctx.fill();
+      ctx.strokeStyle='rgba(255,59,47,.55)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(x,y,6*pulse,0,TAU); ctx.stroke();
+    } else { ctx.fillStyle='rgba(200,200,190,.45)'; ctx.beginPath(); ctx.arc(x,y,1.5,0,TAU); ctx.fill(); } }
   for(const r of rivals){ const [x,y]=rel(r.x,r.z); ctx.fillStyle=r.color; ctx.beginPath(); ctx.arc(x,y,3.2,0,TAU); ctx.fill(); }
   ctx.fillStyle='#ff6a13'; ctx.beginPath(); ctx.moveTo(mx,my-5); ctx.lineTo(mx-4,my+4); ctx.lineTo(mx+4,my+4); ctx.closePath(); ctx.fill();
   ctx.restore();
@@ -3347,6 +3400,8 @@ function frame(now){
     recoil=Math.max(0,recoil-dt*5); flash=Math.max(0,flash-dt); hitMark=Math.max(0,hitMark-dt); killKick=Math.max(0,killKick-dt*2.2);
     if(reloading>0){ reloading-=dt; if(reloading<=0){reloading=0;ammo=magSize();} }
     if(callout){callout.t-=dt;if(callout.t<=0)callout=null;} if(warn){warn.t-=dt;if(warn.t<=0)warn=null;}
+    if(hurtFrom){ hurtFrom.t-=dt; if(hurtFrom.t<=0)hurtFrom=null; }
+    updateThreats(dt);
     if(NET.lost&&running){ NET.t+=dt;
       if(NET.t>40&&!NET.gaveUp){ NET.gaveUp=true; NET.lost=false;
         if(NETA&&NETA.stop)NETA.stop();
@@ -3475,6 +3530,14 @@ function render(){
   if(chargingBear&&!dying){ const bd=wrap(Math.atan2(chargingBear.x-P.x,chargingBear.z-P.z)-P.yaw); const side=Math.abs(bd)>0.6; const pulse=.25+Math.sin(time*9)*.15;
     if(side){ const gx=bd>0?W:0; const g=ctx.createLinearGradient(gx,0,bd>0?W*.6:W*.4,0); g.addColorStop(0,`rgba(255,30,10,${pulse})`); g.addColorStop(1,'rgba(255,30,10,0)'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); } }
   for(const q of particles){ ctx.globalAlpha=clamp(q.life*(q.smoke?.35:1.2),0,q.smoke?.35:1); ctx.fillStyle=q.c; ctx.beginPath(); ctx.arc(q.x,q.y,q.sz,0,TAU); ctx.fill(); } ctx.globalAlpha=1;
+  if(hurtFrom){
+    const ang=wrap(Math.atan2(hurtFrom.x-P.x,hurtFrom.z-P.z)-P.yaw);
+    const r=Math.min(W,H)*.34, a0=ang-Math.PI/2-.34, a1=ang-Math.PI/2+.34;
+    ctx.save(); ctx.globalAlpha=Math.min(1,hurtFrom.t)*.85;
+    ctx.strokeStyle='#ff3b2f'; ctx.lineWidth=Math.max(7,Math.min(W,H)*.017); ctx.lineCap='round';
+    ctx.shadowColor='#ff3b2f'; ctx.shadowBlur=18;
+    ctx.beginPath(); ctx.arc(cx,H/2,r,a0,a1); ctx.stroke();
+    ctx.restore(); }
   if(hurtFlash>0){ const g=ctx.createRadialGradient(cx,H/2,Math.min(W,H)*.3,cx,H/2,Math.max(W,H)*.7); g.addColorStop(0,'rgba(140,0,0,0)'); g.addColorStop(1,`rgba(140,0,0,${hurtFlash*.8})`); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); }
   if(dying){ ctx.fillStyle=`rgba(120,0,0,${Math.min(.85,deathT*.6)})`; ctx.fillRect(0,0,W,H); }
   if(running)drawHUD();
@@ -3639,6 +3702,9 @@ let ARENA={lives:3,out:false,dead:false,deadT:0,finalT:0,leader:null};
 // the server's, so when the packets stopped, everything stopped and the player
 // was stuck. Now we say what happened, keep the world running, and reconnect.
 let NET={lost:false,t:0,gaveUp:false,drops:0,backs:0};
+// Being chewed on by something you never saw is the worst thing in the wave
+// mode. We keep the direction of the last bite and point at it.
+let hurtFrom=null;
 const nowMs=()=>(window.performance&&performance.now?performance.now():Date.now());
 function netLost(){ if(NET.lost)return; NET.lost=true; NET.t=0; NET.drops++;
   callout={text:'Connection lost',sub:'Holding your score — trying to get you back in',c:'#ffb03b',t:3};
@@ -4092,8 +4158,10 @@ function onNetEvent(ev){
     else { sfxHit(false); callout={text:'Wounded — '+spn,sub:ev.hit.zone+' hit  ·  it is running',c:'#e0b45a',t:2}; }
     return; }
   if(ev.t==='wave'){ DEF.on=true; DEF.phase='wave'; DEF.wave=ev.n; DEF.shop=null; $('defShop').classList.add('hidden');
-    warn={text:'WAVE '+ev.n,t:2.6}; sfxRoar();
-    callout={text:ev.late?'You arrived mid-wave':(ev.bears+' bear'+(ev.bears===1?'':'s')+(ev.lions?' · '+ev.lions+' lion'+(ev.lions===1?'':'s'):'')),sub:'Hold the valley together',c:'#ff6a13',t:3.5}; return; }
+    DEF.bearing=(typeof ev.bearing==='number')?ev.bearing:null;
+    warn={text:'WAVE '+ev.n+(ev.from?' — FROM THE '+ev.from.toUpperCase():''),t:3.4}; sfxRoar();
+    callout={text:ev.late?'You arrived mid-wave':(ev.bears+' bear'+(ev.bears===1?'':'s')+(ev.lions?' · '+ev.lions+' lion'+(ev.lions===1?'':'s'):'')),
+      sub:ev.from?('Coming up from the '+ev.from+(ev.flankers?' — and some round the back':'')):'Hold the valley together',c:'#ff6a13',t:4}; return; }
   if(ev.t==='break'){ DEF.phase='break'; DEF.shop=ev.shop; DEF.secs=ev.seconds; warn={text:'WAVE '+ev.wave+' CLEARED',t:2.4};
     tone(660,.2,.2,'triangle'); tone(990,.35,.2,'triangle',.14); openDefShop(); return; }
   if(ev.t==='final'){ ARENA.finalT=ev.seconds||10; tone(660,.12,.25,'square'); return; }
@@ -4109,7 +4177,10 @@ function onNetEvent(ev){
   if(ev.t==='mauled'){ hurtFlash=1; lastHurt=0; sfxRoar();
     callout={text:'MAULED',sub:'A bear caught you out here — move, and watch your back',c:'#ff4d3d',t:3};
     warn={text:'BEAR',t:1.8}; return; }
-  if(ev.t==='hp'){ if(!DEF.down)health=ev.hp; lastHurt=0; hurtFlash=1; if(ev.by)callout={text:ev.by==='lion'?'Lion!':'Bear!',sub:'It is on you — put it down or move',c:'#ff4d3d',t:1.2}; sfxThud(); tone(90,.35,.4,'sawtooth'); return; }
+  if(ev.t==='hp'){ if(!DEF.down)health=ev.hp; lastHurt=0; hurtFlash=1;
+    if(ev.ax!=null)hurtFrom={x:ev.ax,z:ev.az,t:1.6,sp:ev.by||'bear'};
+    if(ev.by)callout={text:ev.by==='lion'?'Lion!':'Bear!',sub:'It is on you — put it down or move',c:'#ff4d3d',t:1.2};
+    sfxThud(); tone(90,.35,.4,'sawtooth'); return; }
   if(ev.t==='down'){ if(NETA&&ev.id===NETA.id){ DEF.down=true; health=0; callout={text:'YOU ARE DOWN',sub:'A teammate standing next to you for 3 s gets you up',c:'#ff4d3d',t:6}; }
     else pushFeed(ev.name+' is down — get to them','','#ff9a63'); return; }
   if(ev.t==='revived'){ if(NETA&&ev.id===NETA.id){ DEF.down=false; health=ev.hp; callout={text:'Back up',sub:'Thank your teammate',c:'#7cff5a',t:2.5}; }
