@@ -45,7 +45,7 @@ const ORIGIN = process.env.ORIGIN || '*';          // set to your site in produc
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v7';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v8';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -883,9 +883,10 @@ function resolveShot(room, p, m) {
   for (const a of room.animals) {
     if (a.state === 'dead') continue;
     const s = SP[a.sp], dx = a.x - p.x, dz = a.z - p.z, dist = Math.hypot(dx, dz);
-    if (dist < .6 || dist > 230) continue;
+    if (dist < .25 || dist > 230) continue;
     const dyaw = wrap(Math.atan2(dx, dz) - yaw);
-    if (Math.abs(dyaw) > .35) continue;
+    const halfWide = Math.atan2(s.rx * s.k * 1.6, Math.max(1, dist));   // how wide it looks from here
+    if (Math.abs(dyaw) > Math.max(.35, halfWide)) continue;
     const lateral = Math.abs(dist * Math.tan(dyaw));
     let h = 1.6 + dist * Math.tan(pitch);
     if (weapon === 'bow') { const v = m.bowSpeed ? Math.min(80, +m.bowSpeed) : 58; const tf = dist / v; h -= 4.9 * tf * tf; }
@@ -953,10 +954,17 @@ function teamCentre(room) {
   for (const p of room.players.values()) if (!p.bot) { x += p.x; z += p.z; n++; }
   return n ? { x: x / n, z: z / n } : { x: 0, z: 0 };
 }
-function spawnPredator(room, sp, wave) {
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+const bearingName = a => COMPASS[Math.round(wrap(a) / (TAU / 8) + 8) % 8];
+function spawnPredator(room, sp, wave, bearing, arc) {
   const s = SP[sp];
   const c = teamCentre(room);
-  const a = Math.random() * TAU, d = (room.mode === 'defense' ? 85 : 45) + Math.random() * 55;   // arena: close enough to matter
+  // A wave that arrives from every direction at once is not a fight you can
+  // hold — it is an ambush with no answer, and the first you know of it is
+  // teeth in your back. Most of a wave now comes from one quarter, so there is
+  // a line to hold and being flanked means something.
+  const a = bearing == null ? Math.random() * TAU : bearing + (Math.random() - .5) * (arc == null ? 1.2 : arc);
+  const d = (room.mode === 'defense' ? 75 : 45) + Math.random() * 55;
   const hpMul = 1 + 0.16 * (wave - 1), spMul = Math.min(1.35, 1 + 0.035 * (wave - 1));
   let px = c.x + Math.sin(a) * d, pz = c.z + Math.cos(a) * d; const rr = Math.hypot(px, pz); if (rr > MAP_R - 10) { px *= (MAP_R - 10) / rr; pz *= (MAP_R - 10) / rr; }
   return { id: animalId++, sp, x: px, z: pz, heading: a + Math.PI,
@@ -969,7 +977,7 @@ function waveRoster(n, players) {
   // fast flankers, never the bulk.
   const team = Math.max(1, players | 0);
   const scale = 1 + .38 * (team - 1);
-  let bears = Math.max(1, Math.round((1 + n * .55) * scale));
+  let bears = Math.max(1, Math.round((1.4 + n * .7) * scale));
   let lions = n < 4 ? 0 : Math.max(1, Math.round((n - 3) * .45 * scale));
   // However far the waves climb, no more than this many on the ground at once —
   // past a point it stops being a fight and becomes a wall.
@@ -987,11 +995,23 @@ function defStartWave(room) {
   // being genuinely alone.
   const r = waveRoster(room.wave, realCount(room) + [...room.players.values()].filter(p => p.bot).length * .3);
   room.animals = room.animals.filter(a => !a.pred);
-  for (let i = 0; i < r.bears; i++) room.animals.push(spawnPredator(room, 'bear', room.wave));
-  for (let i = 0; i < r.lions; i++) room.animals.push(spawnPredator(room, 'lion', room.wave));
+  // The bulk comes up one side; a couple swing round to keep you honest.
+  const bearing = Math.random() * TAU;
+  room.waveBearing = bearing;
+  const flankers = Math.min(2, Math.floor((r.bears + r.lions) / 4));
+  let placed = 0;
+  for (let i = 0; i < r.bears; i++) {
+    const flank = placed++ < flankers ? bearing + Math.PI + (Math.random() - .5) * 1.4 : bearing;
+    room.animals.push(spawnPredator(room, 'bear', room.wave, flank, 1.2));
+  }
+  for (let i = 0; i < r.lions; i++) {
+    // lions are the fast ones that come round the side
+    room.animals.push(spawnPredator(room, 'lion', room.wave, bearing + (Math.random() < .5 ? 1.4 : -1.4), 1.0));
+  }
   while (room.animals.filter(a => !a.pred && a.state !== 'dead').length < 6) room.animals.push(spawnAnimal(room));
-  broadcast(room, { t: 'wave', n: room.wave, bears: r.bears, lions: r.lions });
-  console.log(`[defense] ${room.name} wave ${room.wave}: ${r.bears} bears, ${r.lions} lions`);
+  broadcast(room, { t: 'wave', n: room.wave, bears: r.bears, lions: r.lions,
+                    from: bearingName(bearing), bearing: +bearing.toFixed(2), flankers });
+  console.log(`[defense] ${room.name} wave ${room.wave}: ${r.bears} bears, ${r.lions} lions from the ${bearingName(bearing)}`);
 }
 function defStartBreak(room) {
   room.phase = 'break'; room.breakLeft = DEF_BREAK;
@@ -1084,8 +1104,12 @@ function stepPredator(room, a, dt) {
       }
     }
   } else {
-    for (const p of room.players.values()) {
-      if (p.down || p.out || p.hp <= 0 || p.gone) continue;
+    // Hold-the-ridge is about the people holding it. Stand-ins wander, and a
+    // wave that spends itself chasing them leaves the player watching a fight
+    // they are not in. Real hunters come first; bots only when there is nobody.
+    const live = [...room.players.values()].filter(p => !p.down && !p.out && p.hp > 0 && !p.gone);
+    const people = live.filter(p => !p.bot);
+    for (const p of (people.length ? people : live)) {
       const d = dist(p); if (d < bd) { bd = d; tgt = p; }
     }
   }
@@ -1103,7 +1127,7 @@ function stepPredator(room, a, dt) {
   if (a.roamer) {
     tgt.hp -= a.sp === 'lion' ? 15 : 22;      // five or six bites a life — pressure, not a meat grinder
     tgt.hurtT = 6;                              // no healing while something has its teeth in you
-    send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp, lives: tgt.lives });
+    send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp, lives: tgt.lives, ax: +a.x.toFixed(1), az: +a.z.toFixed(1) });
     broadcast(room, { t: 'feed', name: tgt.name, text: 'is being worked over by a ' + a.sp }, tgt.id);
     if (tgt.hp <= 0) arenaKillPlayer(room, tgt, a.sp);
     a.bites = (a.bites | 0) + 1;
@@ -1112,7 +1136,7 @@ function stepPredator(room, a, dt) {
     return;
   }
   tgt.hp -= Math.round(s.bite * (1 + .05 * (a.wave - 1)));
-  send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp });
+  send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp, ax: +a.x.toFixed(1), az: +a.z.toFixed(1) });
   if (tgt.hp <= 0 && !tgt.down) {
     if (tgt.up && tgt.up.revive > 0) { tgt.up.revive--; tgt.hp = Math.round(tgt.maxHp * .5); send(tgt.ws, { t: 'secondwind', hp: tgt.hp }); }
     else { tgt.down = true; tgt.downT = 0; tgt.reviveT = 0; broadcast(room, { t: 'down', id: tgt.id, name: tgt.name }); }
@@ -1177,7 +1201,7 @@ function defShot(room, p, m) {
   if (p.down) return { ok: false, why: 'You are down' };
   const rateMul = 1 - .15 * (p.up.rate | 0);
   const weapon = m.weapon === 'bow' ? 'bow' : 'rifle';
-  if (room.time - p.lastShot < (weapon === 'bow' ? 1.0 : 0.8) * rateMul) return { ok: false, why: 'too fast' };
+  if (room.time - p.lastShot < (weapon === 'bow' ? .75 : 0.5) * rateMul) return { ok: false, why: 'too fast' };
   const base = resolveShotGeneric(room, p, m);          // same aim maths as the arena
   if (!base.ok || !base.hit) return base;
   const a = base.hit.a;
@@ -1258,11 +1282,15 @@ function balanceBots(room) {
 function stepBot(room, b, dt) {
   b.firing = 0;
   let best = null, bd = 1e9;
+  const holding = isDefense(room) && room.phase === 'wave';
   for (const a of room.animals) {
     if (a.state === 'dead') continue;
+    if (holding && !a.pred) continue;          // during a wave they shoot the wave, not the deer
     const d = Math.hypot(a.x - b.x, a.z - b.z);
     if (d < bd) { bd = d; best = a; }
   }
+  if (holding && !best) { for (const a of room.animals) { if (a.state === 'dead') continue;
+    const d = Math.hypot(a.x - b.x, a.z - b.z); if (d < bd) { bd = d; best = a; } } }
   if (!best) { b.x += Math.sin(b.yaw) * 1.6 * dt; b.z += Math.cos(b.yaw) * 1.6 * dt; return; }
   const want = Math.atan2(best.x - b.x, best.z - b.z);
   b.yaw += wrap(want - b.yaw) * Math.min(1, dt * 1.8);
@@ -1280,6 +1308,14 @@ function stepBot(room, b, dt) {
   spook(room, b.x, b.z, 90);
   if (Math.random() < b.skill) {
     const sp = SP[best.sp];
+    // A stand-in used to delete whatever it shot, bear included, so a squad of
+    // them cleared the wave before it reached the player and there was nothing
+    // left to do. They chip in now; finishing things is the player's job.
+    best.hp -= best.pred ? 1.15 : 1.3;
+    if (best.hp > 0) {
+      if (!best.pred) { best.state = 'flee'; best.t = rnd(5, 8); best.wounded = true; }
+      return;
+    }
     best.state = 'dead'; best.deadT = 0; best.speed = 0;
     const pts = Math.round(sp.pts * (1 + bd / 100));
     b.score += pts; b.kills++;
@@ -1440,7 +1476,12 @@ wss.on('connection', (ws, req) => {
       }
       p = { id: 'p' + (nextPid++), name, user, resumeKey: crypto.randomBytes(9).toString('hex'), color: COLORS[room.players.size % COLORS.length], ws,
             x: 0, z: 0, yaw: 0, score: 0, kills: 0, tags: 0, trophies: 0, longest: 0, firing: 0, lastShot: -9, lastState: Date.now() };
-      if (defense) defPlayerInit(p);
+      // Without this, anyone who joined a match already in progress arrived with
+      // no health and no lives: the game showed them permanently DOWN, they could
+      // not fire a shot all match, and nothing could kill them either because the
+      // comparisons were all against undefined. Matches run back to back, so
+      // joining mid-match is the normal way in, not the edge case.
+      if (defense) defPlayerInit(p); else arenaPlayerInit(p);
       room.players.set(p.id, p);
       send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, build: BUILD, resume: p.resumeKey, mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
                  players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
@@ -1571,7 +1612,11 @@ setInterval(() => {
       if (room.stockT <= 0) { room.stockT = 1; stockArena(room); }
       // A mauling heals over time if you get away — so shooting a predator or
       // out-running it actually buys you something.
-      for (const p of room.players.values()) if (!p.bot && !p.out && p.hp > 0 && p.hp < p.maxHp) if (p.hurtT > 0) p.hurtT -= dt; else p.hp = Math.min(p.maxHp, p.hp + 2.5 * dt);
+      for (const p of room.players.values()) {
+        if (p.bot) continue;
+        if (!Number.isFinite(p.hp) || !Number.isFinite(p.maxHp)) arenaPlayerInit(p);   // should never happen; costs nothing to be sure
+        if (!p.out && p.hp > 0 && p.hp < p.maxHp) { if (p.hurtT > 0) p.hurtT -= dt; else p.hp = Math.min(p.maxHp, p.hp + 2.5 * dt); }
+      }
       for (const a of room.animals) { if (a.pred) stepPredator(room, a, dt); else updateAnimal(room, a, dt); }
       for (const p of room.players.values()) if (p.bot) stepBot(room, p, dt);
       if (room.timeLeft <= 10 && !room.warned10) { room.warned10 = true; broadcast(room, { t: 'final', seconds: 10 }); }
