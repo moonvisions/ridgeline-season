@@ -138,7 +138,11 @@
 
   /* ---- Ridge Defense shop ---- */
   #defShop{z-index:12;align-items:flex-start;justify-content:flex-start}
-  #defShop .shopCard{margin:auto}   /* centred when it fits, scrolls from the top on a short phone instead of cutting the top off */
+  #defShop .shopCard{margin:auto}
+  #bShopOpen{position:fixed;top:78px;left:50%;transform:translateX(-50%);z-index:11;padding:10px 18px;border-radius:9px;
+    border:1px solid var(--blaze);background:rgba(20,12,4,.82);color:#fff;font:600 14px Trebuchet MS,sans-serif;letter-spacing:.5px;cursor:pointer}
+  #bShopOpen small{color:var(--gold);font-weight:400}
+  #bShopOpen.hidden{display:none}   /* centred when it fits, scrolls from the top on a short phone instead of cutting the top off */
   .shopCard{max-width:560px;text-align:left}
   .shopGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
   .shopItem{background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:9px;padding:13px 14px;
@@ -695,6 +699,7 @@
   </div>
 </div>
 
+<button id="bShopOpen" class="hidden">Open the shop <small>(B)</small></button>
 <div class="overlay hidden" id="defShop">
   <div class="card shopCard">
     <div class="pKicker" id="shopKick">Wave cleared</div>
@@ -1270,7 +1275,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v12';   // bump this whenever you change the policy
+const BUILD = 'arena-v13';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1966,8 +1971,14 @@ async function pollPresence(){
       : 'A match is ready when you are');
     if(t){ t.style.display=n>0?'':'none'; setTxt('titleLive', n+(n===1?' hunter online':' hunters online')); }
     SERVER_OK=true; SERVER_BUILD=j.build||''; SERVER_STORE=j.storage||'';
-    setTxt('svrState','Server online'+(j.build?' · build '+j.build:'')+(n>0?' · '+n+' playing':''));
-    const sv=$('svrDot'); if(sv)sv.style.background='#7cff5a';
+    // Say it out loud when the page and the server are different versions —
+    // an old server quietly ignores everything new in the page, and from the
+    // player's side that looks like "nothing changed" or "it is broken".
+    const mismatch=j.build&&j.build!==BUILD, noAcc=j.storage==='database-unreachable';
+    setTxt('svrState',mismatch?('⚠ The game server is running '+j.build+' but this page is '+BUILD+' — the server needs updating, so new features will not work online')
+      :noAcc?('⚠ Server online, but accounts are paused — '+(j.problem||'the database cannot be reached')+' You can still play as a guest.')
+      :'Server online'+(j.build?' · build '+j.build:'')+(n>0?' · '+n+' playing':''));
+    const sv=$('svrDot'); if(sv)sv.style.background=mismatch||noAcc?'#ffb03b':'#7cff5a';
   }catch(e){
     SERVER_OK=false;
     if(el)setTxt('liveCount','Server unreachable — online play is down'); if(t)t.style.display='none';
@@ -2818,6 +2829,7 @@ function onKeyDown(e){
   if(has('ShiftLeft')||has('ShiftRight')){ if(e.preventDefault)e.preventDefault(); }
   if(has('Escape')){ if(!repeat){ if(paused)resumeGame(); else if(canPause())pauseGame(); } return; }
   if(paused)return;
+  if(DEF.on&&DEF.phase==='break'&&!defShopOpen()&&!repeat&&(has('KeyB')||e.key==='b'||e.key==='B')&&DEF.shop){ openDefShop(); return; }
   if(DEF.on&&defShopOpen()&&!repeat){
     for(let i=1;i<=9;i++) if(has('Digit'+i)||has('Numpad'+i)||e.key===String(i)){ defBuyKey(i); e.preventDefault&&e.preventDefault(); return; }
     if(has('Enter')||has('NumpadEnter')){ defReady(); e.preventDefault&&e.preventDefault(); return; }
@@ -3034,7 +3046,7 @@ function drawScope(){
   if(tgt){ const rr=Math.round(tgt.p.zr);
     ctx.fillStyle='rgba(20,24,18,.55)'; ctx.fillRect(cx-30,cy-R*.30-13,60,18);
     ctx.fillStyle=dim?'rgba(255,120,80,.95)':'rgba(240,240,225,.95)'; ctx.fillText(rr+' m',cx,cy-R*.30);
-    if(tgt.a.sp){ ctx.font='9px Courier New,monospace'; ctx.fillStyle='rgba(240,240,225,.7)'; ctx.fillText(SP[tgt.a.sp].name.toUpperCase(),cx,cy-R*.30+14); } }
+    if(tgt.a.sp&&!warn){ ctx.font='9px Courier New,monospace'; ctx.fillStyle='rgba(240,240,225,.7)'; ctx.fillText(SP[tgt.a.sp].name.toUpperCase(),cx,cy-R*.30+14); } }
   // magnification, etched into the bottom of the glass
   ctx.font='bold 10px Courier New,monospace'; ctx.textAlign='right'; ctx.fillStyle='rgba(240,240,225,.55)';
   ctx.fillText((weapon==='rifle'?scopeZoom():1.7).toFixed(0)+'×',cx+R*.62,cy+R*.72);
@@ -3545,7 +3557,12 @@ function drawMinimap(){
 
 // ---------- main loop ----------
 let last=performance.now();
-function frame(now){
+// The shop button is there for the whole break whenever the shop itself is
+// closed, so closing it by accident never costs you your upgrades.
+function syncShopButton(){ const b=$('bShopOpen'); if(!b)return;
+  const want=DEF.on&&DEF.phase==='break'&&!!DEF.shop&&!defShopOpen()&&running;
+  if(want===b.classList.contains('hidden'))b.classList.toggle('hidden',!want); }
+function frame(now){ syncShopButton();
   const dt=Math.min(.05,(now-last)/1000); last=now;
   // Paused: keep painting the frozen scene behind the menu, advance nothing.
   if(paused){ render(); requestAnimationFrame(frame); return; }
@@ -4320,6 +4337,9 @@ async function startArena(online,netMode){
   if(!arenaOnline)callout={text:netErr?'Offline — server unreachable':'Offline practice match',
     sub:netErr||'These are practice bots, not real hunters',c:'#ffb03b',t:6};
   if(arenaOnline)setTxt('netStatus','In room '+(save.room||'RIDGE')+(info.guest?' · sign in to keep your score':''));
+  if(arenaOnline&&info.build&&info.build!==BUILD){
+    callout={text:'Server is out of date',sub:'Server '+info.build+' · page '+BUILD+' — new features will not work until the server is updated',c:'#ffb03b',t:8};
+    setTxt('netStatus','⚠ The game server is running '+info.build+' but this page is '+BUILD+'. Update the server.'); }
   if(arenaOnline&&!info.build){
     callout={text:'Server is out of date',sub:'Online play may misbehave until the server is updated',c:'#ffb03b',t:7};
     setTxt('netStatus','⚠ The game server is running an older version than this page — online play may misbehave.'); }
@@ -4542,6 +4562,7 @@ $('arenaBtn').addEventListener('click',()=>startArena(false));
 $('arenaOnlineBtn').addEventListener('click',()=>startArena(true));
 $('defBtn').addEventListener('click',()=>{ audio(); startDefense(); });
 $('shopReady').addEventListener('click',defReady);
+$('bShopOpen').addEventListener('click',()=>openDefShop());
 $('arenaMore').addEventListener('click',()=>{ const o=$('arenaOpts'), open=o.classList.toggle('on');
   $('arenaMore').textContent=open?'Hide options':'Play with friends'; });
 $('tutBtn').addEventListener('click',startTutorial);
