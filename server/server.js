@@ -41,11 +41,22 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 8080;
-const ORIGIN = process.env.ORIGIN || '*';          // set to your site in production
+const ORIGIN = process.env.ORIGIN || process.env.Origin || '*';   // set to your site in production
+// The site is reachable with and without "www", and a browser treats those as
+// two different sites. Allow both forms of whatever was configured, and answer
+// each request with its own origin so the browser accepts it.
+const ALLOWED = ORIGIN === '*' ? null : new Set(ORIGIN.split(',').map(o => o.trim().replace(/\/+$/, '')).filter(Boolean).flatMap(o => {
+  try { const u = new URL(o); const bare = u.hostname.replace(/^www\./, '');
+        return [u.protocol + '//' + bare, u.protocol + '//www.' + bare]; } catch (e) { return [o]; } }));
+function corsFor(req) {
+  const o = req && req.headers && req.headers.origin;
+  if (!ALLOWED) return '*';
+  return o && ALLOWED.has(o.replace(/\/+$/, '')) ? o : [...ALLOWED][0];
+}
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v8';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v10';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -137,8 +148,34 @@ async function dbConnect() {
   let pg;
   try { pg = require('pg'); }
   catch (e) { console.error('[data] DATABASE_URL is set but the "pg" package is not installed. Run: npm install pg'); process.exit(1); }
-  const local = /@(localhost|127\.0\.0\.1)[:/]/.test(DATABASE_URL);
-  pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: local ? false : { rejectUnauthorized: false }, max: 4 });
+  // Free hosts (Neon, Supabase, Aiven) hand out a connection string with SSL
+  // settings baked into it, and the pg library lets those override anything
+  // set here — including forcing a certificate check that a self-signed
+  // server fails. Take the SSL settings out of the string and decide here:
+  // check the certificate properly, and only if that is impossible fall back
+  // to an encrypted-but-unchecked connection, saying so in the log.
+  let cs = DATABASE_URL.trim();
+  try {
+    const u = new URL(cs);
+    for (const k of ['sslmode', 'channel_binding', 'uselibpqcompat', 'sslrootcert', 'sslcert', 'sslkey']) u.searchParams.delete(k);
+    cs = u.toString();
+  } catch (e) { console.error('[data] DATABASE_URL does not look like a database address — check it was pasted whole'); }
+  const local = /@(localhost|127\.0\.0\.1)(:\d+)?\//.test(cs);
+  const open = async ssl => {
+    const p = new pg.Pool({ connectionString: cs, ssl, max: 4, idleTimeoutMillis: 10000, connectionTimeoutMillis: 20000 });
+    p.on('error', e => console.error('[data] database connection dropped:', e.message));   // an idle drop must not crash the game
+    await p.query('SELECT 1');
+    return p;
+  };
+  if (local) pool = await open(false);
+  else {
+    try { pool = await open({ rejectUnauthorized: true }); }
+    catch (e) {
+      if (!/self.signed|unable to verify|certificate/i.test(e.message)) throw e;
+      console.warn('[data] the database certificate could not be verified — connecting encrypted without the check');
+      pool = await open({ rejectUnauthorized: false });
+    }
+  }
   await dbQuery('CREATE TABLE IF NOT EXISTS ridgeline_store (k text PRIMARY KEY, v jsonb NOT NULL, updated timestamptz NOT NULL DEFAULT now())');
   const r = await dbQuery('SELECT v FROM ridgeline_store WHERE k = $1', ['db']);
   if (r.rows.length && r.rows[0].v && r.rows[0].v.users) {
@@ -366,7 +403,7 @@ setInterval(() => { const now = Date.now(); for (const [k, b] of buckets) if (no
 function json(res, code, obj) {
   res.writeHead(code, {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': ORIGIN,
+    'Access-Control-Allow-Origin': res._cors || ORIGIN, 'Vary': 'Origin',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'X-Content-Type-Options': 'nosniff',
@@ -500,6 +537,9 @@ const server = http.createServer(async (req, res) => {
   // before forwarding, so a request for /api/status arrives here as /status and
   // nothing matches. Accept both shapes, so the game works whether or not the
   // proxy trims the path.
+  // And the other way round: if the host does NOT trim, the game's own "/api"
+  // prefix arrives on top of ours as /api/api/…. Fold it back to one.
+  while (url.pathname.startsWith('/api/api/')) url.pathname = url.pathname.slice(4);
   if (!url.pathname.startsWith('/api')) {
     const BARE = ['/status', '/register', '/login', '/me', '/logout', '/cloud',
       '/leaderboard', '/seasons', '/challenge', '/event', '/entitlement',
@@ -509,6 +549,7 @@ const server = http.createServer(async (req, res) => {
     if (BARE.includes(url.pathname)) url.pathname = '/api' + url.pathname;
   }
   const ip = ipOf(req);
+  res._cors = corsFor(req);
   if (req.method === 'OPTIONS') return json(res, 204, {});
   try {
     if (url.pathname === '/' || url.pathname === '/api/status') {
@@ -1714,7 +1755,7 @@ setInterval(() => {
     console.error('     Attach a database to the app and this fixes itself.\n');
   }
   await backup('boot');
-  setInterval(() => backup('hourly'), 3600e3);
+  setInterval(() => backup('scheduled'), (dbReady ? 6 : 1) * 3600e3);   // every save already goes to the database
   startListening();
 })();
 function startListening() {
