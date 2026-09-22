@@ -137,7 +137,8 @@
   @media (max-width:620px){ .cabin{padding:18px 16px 16px} .cabinLine{font-size:13px} }
 
   /* ---- Ridge Defense shop ---- */
-  #defShop{z-index:12;align-items:center;justify-content:center}
+  #defShop{z-index:12;align-items:flex-start;justify-content:flex-start}
+  #defShop .shopCard{margin:auto}   /* centred when it fits, scrolls from the top on a short phone instead of cutting the top off */
   .shopCard{max-width:560px;text-align:left}
   .shopGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
   .shopItem{background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:9px;padding:13px 14px;
@@ -149,6 +150,9 @@
   .shopItem small{display:block;font-size:12px;color:var(--dim);margin-top:3px;line-height:1.4}
   .shopItem .cost{display:inline-block;margin-top:8px;font-family:var(--type);font-size:11px;letter-spacing:1.5px;color:var(--gold)}
   .shopItem .lvl{float:right;font-family:var(--type);font-size:10px;color:var(--faint)}
+  .shopItem .key{display:inline-block;min-width:18px;margin-right:6px;padding:1px 5px;border:1px solid var(--line);border-radius:4px;font-family:var(--type);font-size:10px;color:var(--gold);text-align:center}
+  .shopHint{font-size:12px;color:var(--dim);margin:6px 0 0}
+  #shopReady{margin-top:14px}
   @media (max-width:560px){ .shopGrid{grid-template-columns:1fr} }
   /* the defense entry card sits under the arena hero and matches it */
   .defHero{margin-top:14px;padding:22px 24px;border-radius:14px;position:relative;overflow:hidden;
@@ -695,9 +699,11 @@
   <div class="card shopCard">
     <div class="pKicker" id="shopKick">Wave cleared</div>
     <h1>Spend it</h1>
-    <p id="shopLine">Next wave in <b id="shopSecs">16</b>s · you have <b id="shopPts">0</b> points</p>
+    <p id="shopLine">Next wave in <b id="shopSecs">20</b>s · you have <b id="shopPts">0</b> points</p>
+    <p class="shopHint" id="shopHint">Click an upgrade, or press its number key. Your rifle and quiver are refilled for the next wave.</p>
     <div class="shopGrid" id="shopGrid"></div>
-    <button id="shopReady" class="ghost">Ready — back to it</button>
+    <button id="shopReady" class="ghost">Ready — start the next wave <small>(Enter)</small></button>
+    <p class="shopHint" id="shopWait"></p>
   </div>
 </div>
 
@@ -1264,7 +1270,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v11';   // bump this whenever you change the policy
+const BUILD = 'arena-v12';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1762,7 +1768,7 @@ class WebSocketAdapter{
           this.auth=!!m.authoritative; this.guest=!!m.guest; this.build=m.build||''; if(m.resume)this.resumeKey=m.resume; if(m.seconds)matchSeconds=m.seconds;
           if(onWelcome)onWelcome({seed:m.seed>>>0,you:m.id,auth:this.auth,guest:this.guest,build:this.build,resumed:!!m.resumed}); }
         else if(m.t==='warmup'){ if(this.onEvent)this.onEvent({t:'warmup',seconds:m.seconds,players:m.players,defense:!!m.defense,team:m.team}); }
-        else if(['wave','break','hp','down','revived','secondwind','over','bought','respawn','mauledDown','eliminated','final','flare','flared','lastchance'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
+        else if(['wave','break','hp','down','revived','secondwind','over','bought','respawn','mauledDown','eliminated','final','flare','flared','lastchance','ready','readyall'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
         else if(m.t==='start'){ if(this.onEvent)this.onEvent({t:'start',seconds:m.seconds,players:m.players}); }
         else if(m.t==='end'){ if(this.onEvent)this.onEvent({t:'end',board:m.board}); }
         else if(m.t==='shotResult'){ if(this.onEvent)this.onEvent({t:'shotResult',...m}); }
@@ -1775,9 +1781,9 @@ class WebSocketAdapter{
         else if(m.t==='states'){ for(const st of m.players||[]){ const p=this.map[st.id]; if(!p)continue; p.tx=st.x; p.tz=st.z; p.yaw=st.yaw; p.score=st.score|0; p.kills=st.kills|0; if(st.firing)p.firing=.25; }
           if(m.animals)applyRemoteAnimals(m.animals);
           if(m.mode==='defense'){ DEF.phase=m.phase; DEF.wave=m.wave|0; DEF.left=m.predsLeft|0; DEF.secs=m.seconds||0;
-            const me=(m.players||[]).find(q=>q.id===this.id); if(me){ DEF.pts=me.pts|0; DEF.max=me.max||100; if(!DEF.down)health=me.hp; DEF.down=!!me.down;
-              DEF.flares=me.fl==null?DEF.flares:me.fl; DEF.rv=me.rv||0; }
-            DEF.team=(m.players||[]).filter(q=>q.id!==this.id).map(q=>({id:q.id,name:(this._peers.find(x=>x.id===q.id)||{}).name||'',hp:q.hp,max:q.max,down:!!q.down,bot:!!q.bot,x:q.x,z:q.z,rv:q.rv||0,rvg:q.rvg||null})); }
+            const me=(m.players||[]).find(q=>q.id===this.id); if(me){ if((me.pts|0)!==DEF.pts&&defShopOpen()){ DEF.pts=me.pts|0; renderDefShop(); } DEF.pts=me.pts|0; DEF.max=me.max||100; if(!DEF.down)health=me.hp; DEF.down=!!me.down;
+              DEF.flares=me.fl==null?DEF.flares:me.fl; DEF.rv=me.rv||0; if(me.brl!=null)DEF.brl=me.brl; }
+            DEF.team=(m.players||[]).filter(q=>q.id!==this.id).map(q=>({id:q.id,name:(this._peers.find(x=>x.id===q.id)||{}).name||'',hp:q.hp,max:q.max,down:!!q.down,bot:!!(q.bot||(this._peers.find(x=>x.id===q.id)||{}).bot),x:q.x,z:q.z,rv:q.rv||0,rvg:q.rvg||null})); }
           if(m.mode!=='defense'){ const meA=(m.players||[]).find(q=>q.id===this.id);
             if(meA){ ARENA.lives=meA.lives==null?3:meA.lives; ARENA.out=!!meA.out; ARENA.dead=(meA.hp<=0)&&!meA.out; if(!ARENA.dead&&!ARENA.out&&meA.hp)health=meA.hp; } }
           if(m.phase==='warm'){ warmup=Math.max(0,m.seconds||0); } else { warmup=0; if(typeof m.seconds==='number'&&m.mode!=='defense')timeLeft=m.seconds; } }
@@ -2611,6 +2617,16 @@ function fireFlare(){
   if((DEF.flares|0)<=0){ callout={text:'No flare left',sub:'Hold on — a teammate has to reach you',c:'#e0b45a',t:1.8}; sfxClick(0,900); return; }
   NETA.emit({t:'flare'}); tone(1400,.08,.25,'square'); tone(700,.5,.3,'sawtooth',.05);
 }
+// The exact direction under the crosshair. The picture is drawn with the
+// horizon a little above the middle of the screen and the crosshair in the
+// middle, so the crosshair looks slightly DOWN from the horizon line. Sending
+// the horizon's angle sent every shot high — by metres at range, and far more
+// on a tall phone screen. Always aim from here, and always before the recoil.
+function aimAngles(spread){
+  const s=spread||0;
+  const tanP=(H*.46+Math.tan(P.pitch+swayP)*f-H/2)/f;
+  return {yaw:P.yaw+swayY+rnd(-s,s), pitch:Math.atan(tanP)+rnd(-s,s)};
+}
 function fire(){
   if(DEF.on&&DEF.down){ fireFlare(); return; }
   if(mode==='arena'&&(ARENA.dead||ARENA.out))return;
@@ -2622,13 +2638,13 @@ function fire(){
     const cd=DEF.on?(weapon==='bow'?.75:.5)*(1-.15*((DEF.up&&DEF.up.rate)|0)):(weapon==='bow'?1.0:.8);
     if(nowMs()-lastNetShot<cd*1000){ sfxClick(0,1700); return; }
     lastNetShot=nowMs();
+    const aim=aimAngles(aimSpread());          // where you are aiming NOW, before the kick moves the barrel
     if(weapon==='rifle'){ if(ammo<=0){ sfxClick(0,1400); return; } ammo--; sfxShot(); flash=.08; recoil=1;
       for(let i=0;i<12;i++)particles.push({x:cx+W*.07,y:H*.53,vx:rnd(-40,40)-60,vy:rnd(-90,-20),life:rnd(.6,1.4),c:'#c9c4b6',sz:rnd(6,16),smoke:true});
       P.pitch=clamp(P.pitch+.04*(scoped?.6:1),-.7,.7); }
     else { if(arrowsLeft<=0){ sfxClick(0,900); return; } arrowsLeft--; sfxBow(); recoil=.4; }
     stats.shots++;
-    const spread=aimSpread();
-    NETA.emit({t:'shot',weapon,x:+P.x.toFixed(2),z:+P.z.toFixed(2),yaw:+(P.yaw+swayY+rnd(-spread,spread)).toFixed(4),pitch:+(P.pitch+swayP+rnd(-spread,spread)).toFixed(4),magnum:!!upg('rifle'),bowSpeed:upg('bow')?78:58});
+    NETA.emit({t:'shot',weapon,x:+P.x.toFixed(2),z:+P.z.toFixed(2),yaw:+aim.yaw.toFixed(4),pitch:+aim.pitch.toFixed(4),magnum:!!upg('rifle'),bowSpeed:upg('bow')?78:58});
     return; }
   if(weapon==='rifle'){
     if(ammo<=0){ sfxClick(0,1400); return; }
@@ -2655,7 +2671,7 @@ function fire(){
     if(arrowsLeft<=0){ sfxClick(0,900); callout={text:'Quiver empty',sub:'',c:'#f1ebdc',t:1.2}; return; }
     arrowsLeft--; stats.shots++; sfxBow(); recoil=.4;
     const spd=(upg('bow')?78:58)*(1+Math.min(.25,(sLv('arch')-1)*.008)), sp=aimSpread();
-    const yaw=P.yaw+swayY+rnd(-sp,sp), pitch=P.pitch+swayP+rnd(-sp,sp);
+    const {yaw,pitch}=aimAngles(sp);
     arrows.push({x:P.x,z:P.z,y:camAlt-.1,vx:Math.sin(yaw)*Math.cos(pitch)*spd,vz:Math.cos(yaw)*Math.cos(pitch)*spd,vy:Math.sin(pitch)*spd,t:0});
     spook(14,1.2);
   }
@@ -2802,6 +2818,10 @@ function onKeyDown(e){
   if(has('ShiftLeft')||has('ShiftRight')){ if(e.preventDefault)e.preventDefault(); }
   if(has('Escape')){ if(!repeat){ if(paused)resumeGame(); else if(canPause())pauseGame(); } return; }
   if(paused)return;
+  if(DEF.on&&defShopOpen()&&!repeat){
+    for(let i=1;i<=9;i++) if(has('Digit'+i)||has('Numpad'+i)||e.key===String(i)){ defBuyKey(i); e.preventDefault&&e.preventDefault(); return; }
+    if(has('Enter')||has('NumpadEnter')){ defReady(); e.preventDefault&&e.preventDefault(); return; }
+  }
   if(!running)return;
   if(has('KeyR'))reload();
   if(has('Space'))breathHold=true;
@@ -3366,7 +3386,10 @@ function drawDownedOverlay(){
   const mates=DEF.team.filter(t=>!t.down&&typeof t.x==='number');
   let near=null, nd=1e9; for(const t of mates){ const d=Math.hypot(t.x-P.x,t.z-P.z); if(d<nd){nd=d;near=t;} }
   const rescuer=DEF.team.find(t=>t.rvg&&NETA&&t.rvg===NETA.id);
-  let line=near?((rescuer?rescuer.name+' is coming for you':'Nearest teammate: '+(near.name||'hunter'))+' — '+Math.round(nd)+' m away'):'Nobody left standing to reach you';
+  const botsDone=DEF.brl===0&&!DEF.team.some(t=>!t.bot&&!t.down);
+  let line=rescuer?(rescuer.name+' is coming for you — '+Math.round(Math.hypot(rescuer.x-P.x,rescuer.z-P.z))+' m away')
+    :botsDone?'The bots have picked you up twice this wave — it is your flare now'
+    :near?('Nearest teammate: '+(near.name||'hunter')+' — '+Math.round(nd)+' m away'):'Nobody left standing to reach you';
   // Every line here goes through the wrapper: these sentences are long and a
   // phone held sideways is narrow, and a line that runs off the side is useless.
   const lh=small+4;
@@ -4235,13 +4258,23 @@ function startDay(){ sendEvent('hunt_start',{hunt:lvlSel}); if(document.activeEl
 function startSurvival(){ if(!survUnlocked())return; if(NETA){NETA.stop();NETA=null;} arenaAuth=false; rivals=[]; LV=null; mode='surv'; audio(); resetDay(); animals=[]; fogDay=1; running=true; $('lodge').classList.add('hidden'); tryLock(); waveClear=true; waveT=3; warn={text:'Get ready',t:3}; }
 const ARENA_HUNT=1;   // one hunt under your belt, then the arena is yours
 function arenaUnlocked(){ return starsFor(ARENA_HUNT)>0||save.tutorialDone; }
-function openDefShop(){ renderDefShop(); $('defShop').classList.remove('hidden'); }
+// The shop needs the mouse. While the game holds the pointer, every click goes
+// to the rifle and the shop cannot be touched — which is exactly what "it will
+// not let me upgrade" was. Let go of the pointer when the shop opens.
+function openDefShop(){ renderDefShop(); $('defShop').classList.remove('hidden'); setTxt('shopWait','');
+  $('shopReady').disabled=false; if(document.exitPointerLock&&document.pointerLockElement)document.exitPointerLock(); }
+function closeDefShop(){ $('defShop').classList.add('hidden'); if(running&&!TOUCH_UI)tryLock(); }
+function defShopOpen(){ const el=$('defShop'); return el&&!el.classList.contains('hidden'); }
+function defReady(){ if(NETA&&DEF.phase==='break'){ NETA.emit({t:'ready'}); $('shopReady').disabled=true; setTxt('shopWait','Waiting for the rest of the squad…'); } closeDefShop(); }
+function defBuyKey(n){ const k=Object.keys(DEF.shop||{})[n-1]; if(k&&NETA)NETA.emit({t:'buy',item:k}); }
+// Every wave starts with a full rifle and a full quiver, whatever you spent.
+function defRestock(){ ammo=magSize(); arrowsLeft=quiverSize(); reloading=0; }
 function renderDefShop(){
   if(!DEF.shop)return;
   setTxt('shopKick','Wave '+DEF.wave+' cleared'); setTxt('shopPts',DEF.pts);
-  setHtml('shopGrid',Object.entries(DEF.shop).map(([k,it])=>{
+  setHtml('shopGrid',Object.entries(DEF.shop).map(([k,it],i)=>{
     const lvl=DEF.up[k]|0, maxed=lvl>=it.max, poor=DEF.pts<it.cost;
-    return `<div class="shopItem${maxed||poor?' off':''}" data-buy="${k}"><span class="lvl">${it.max>1?(lvl+'/'+it.max):(lvl?'owned':'')}</span><b>${it.name}</b><small>${it.desc}</small><span class="cost">${maxed?'MAXED':it.cost+' PTS'}</span></div>`;
+    return `<div class="shopItem${maxed||poor?' off':''}" data-buy="${k}"><span class="lvl">${it.max>1?(lvl+'/'+it.max):(lvl?'owned':'')}</span><b><span class="key">${i+1}</span>${it.name}</b><small>${it.desc}</small><span class="cost">${maxed?'MAXED':poor?(it.cost+' PTS · need '+(it.cost-DEF.pts)+' more'):it.cost+' PTS'}</span></div>`;
   }).join(''));
   document.querySelectorAll('.shopItem[data-buy]').forEach(el=>el.addEventListener('click',()=>{ if(el.classList.contains('off'))return; if(NETA)NETA.emit({t:'buy',item:el.dataset.buy}); }));
 }
@@ -4319,12 +4352,13 @@ function onNetEvent(ev){
     tone(220,.6,.25,'sawtooth'); return; }
   if(ev.t==='flared'){ if(ev.ok){ DEF.down=false; health=ev.hp; DEF.flares=ev.flares; } else callout={text:'No flare',sub:ev.why||'',c:'#e0b45a',t:1.6}; return; }
   if(ev.t==='lastchance'){ warn={text:'EVERYONE IS DOWN',t:3}; callout={text:'Last chance',sub:DEF.down&&DEF.flares>0?'Fire your flare — click / press FIRE':'Someone still has a flare…',c:'#ff4d3d',t:4}; tone(300,.3,.3,'square'); return; }
-  if(ev.t==='wave'){ DEF.on=true; DEF.phase='wave'; DEF.wave=ev.n; DEF.shop=null; $('defShop').classList.add('hidden');
+  if(ev.t==='wave'){ const wasOpen=defShopOpen(); DEF.on=true; DEF.phase='wave'; DEF.wave=ev.n; DEF.shop=null; $('defShop').classList.add('hidden');
+    defRestock(); if(wasOpen&&running&&!TOUCH_UI)tryLock();
     DEF.bearing=(typeof ev.bearing==='number')?ev.bearing:null;
     warn={text:'WAVE '+ev.n+(ev.from?' — FROM THE '+ev.from.toUpperCase():''),t:3.4}; sfxRoar();
     callout={text:ev.late?'You arrived mid-wave':(ev.bears+' bear'+(ev.bears===1?'':'s')+(ev.lions?' · '+ev.lions+' lion'+(ev.lions===1?'':'s'):'')),
       sub:ev.from?('Coming up from the '+ev.from+(ev.flankers?' — and some round the back':'')):'Hold the valley together',c:'#ff6a13',t:4}; return; }
-  if(ev.t==='break'){ DEF.phase='break'; DEF.shop=ev.shop; DEF.secs=ev.seconds; warn={text:'WAVE '+ev.wave+' CLEARED',t:2.4};
+  if(ev.t==='break'){ DEF.phase='break'; DEF.shop=ev.shop; DEF.secs=ev.seconds; DEF.down=false; defRestock(); warn={text:'WAVE '+ev.wave+' CLEARED',t:2.4};
     tone(660,.2,.2,'triangle'); tone(990,.35,.2,'triangle',.14); openDefShop(); return; }
   if(ev.t==='final'){ ARENA.finalT=ev.seconds||10; tone(660,.12,.25,'square'); return; }
   if(ev.t==='mauledDown'){ if(NETA&&ev.id===NETA.id){ ARENA.dead=true; ARENA.lives=ev.lives; health=0;
@@ -4348,8 +4382,12 @@ function onNetEvent(ev){
   if(ev.t==='revived'){ if(NETA&&ev.id===NETA.id){ DEF.down=false; health=ev.hp; callout={text:'Back up',sub:'Thank your teammate',c:'#7cff5a',t:2.5}; }
     else pushFeed(ev.name+' is back up','','#7cff5a'); return; }
   if(ev.t==='secondwind'){ health=ev.hp; callout={text:'Second wind',sub:'Your one free get-up, used',c:'#7cff5a',t:2.5}; return; }
-  if(ev.t==='bought'){ if(ev.ok){ DEF.pts=ev.pts; DEF.up[ev.item]=ev.level; if(ev.refill){ ammo=magSize(); arrows=quiverSize(); } if(ev.maxHp){ DEF.max=ev.maxHp; health=ev.hp; } tone(880,.12,.15,'square'); renderDefShop(); }
-    else callout={text:'Cannot buy',sub:ev.why||'',c:'#e0b45a',t:1.5}; return; }
+  if(ev.t==='bought'){ if(ev.ok){ DEF.pts=ev.pts; DEF.up[ev.item]=ev.level; if(typeof ev.flares==='number')DEF.flares=ev.flares; if(ev.maxHp){ DEF.max=ev.maxHp; health=ev.hp; } tone(880,.12,.15,'square'); renderDefShop();
+      setTxt('shopWait','Bought: '+((DEF.shop&&DEF.shop[ev.item])?DEF.shop[ev.item].name:ev.item)+(ev.level>1?' (level '+ev.level+')':'')); }
+    else { setTxt('shopWait','Cannot buy that — '+(ev.why||'')); callout={text:'Cannot buy',sub:ev.why||'',c:'#e0b45a',t:1.5}; } return; }
+  if(ev.t==='ready'){ if(!(NETA&&ev.id===NETA.id))pushFeed(ev.name+' is ready','('+ev.n+' of '+ev.of+')','#7cff5a');
+    if(defShopOpen()&&ev.of>1)setTxt('shopWait',ev.n+' of '+ev.of+' ready'); return; }
+  if(ev.t==='readyall'){ DEF.secs=ev.seconds; setTxt('shopSecs',ev.seconds); callout={text:'Everyone is ready',sub:'Next wave in '+ev.seconds+' s',c:'#7cff5a',t:2}; return; }
   if(ev.t==='over'){ DEF.phase='over'; $('defShop').classList.add('hidden'); running=false;
     setTxt('endTitle','The valley fell'); setTxt('endSub','You held out for '+ev.wave+' wave'+(ev.wave===1?'':'s')+'.');
     setHtml('eGoals',(ev.board||[]).map((b,i)=>`<div class="goal"><span class="s">${i+1}.</span> <b style="${NETA&&b.id===NETA.id?'color:#ff6a13':''}">${b.name}${b.bot?' <small style="color:var(--faint)">bot</small>':''}</b> — ${b.pts} pts <span style="color:var(--faint)">(${b.kills} shot, ${b.tags} tagged)</span></div>`).join(''));
@@ -4503,7 +4541,7 @@ $('tabHelp').addEventListener('click',()=>showTab('Help'));
 $('arenaBtn').addEventListener('click',()=>startArena(false));
 $('arenaOnlineBtn').addEventListener('click',()=>startArena(true));
 $('defBtn').addEventListener('click',()=>{ audio(); startDefense(); });
-$('shopReady').addEventListener('click',()=>$('defShop').classList.add('hidden'));
+$('shopReady').addEventListener('click',defReady);
 $('arenaMore').addEventListener('click',()=>{ const o=$('arenaOpts'), open=o.classList.toggle('on');
   $('arenaMore').textContent=open?'Hide options':'Play with friends'; });
 $('tutBtn').addEventListener('click',startTutorial);
