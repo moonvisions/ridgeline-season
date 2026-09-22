@@ -426,6 +426,8 @@
   button:active:not(:disabled){transform:translateY(4px);box-shadow:0 1px 0 #8f2c00,0 4px 12px rgba(255,84,0,.28)}
   button:disabled{background:rgba(255,255,255,.07);color:var(--faint);box-shadow:none;cursor:default}
   button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+  .lodgeTop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+  .acctBtn{opacity:.85}
   .backBtn{width:auto;margin:0 0 18px;padding:10px 16px;font-family:var(--sans);font-size:12px;
     font-weight:bold;letter-spacing:1.4px;text-transform:uppercase;color:#d8e0d7;cursor:pointer;
     background:rgba(14,20,16,.6);border:1px solid rgba(255,255,255,.22);border-radius:4px;box-shadow:none;
@@ -727,6 +729,7 @@
       <button id="tLodge" class="tLink">The lodge</button>
       <button id="tGuide" class="tLink">Field guide</button>
       <button id="tHelp" class="tLink">Controls</button>
+      <button id="tLogout" class="tLink" style="display:none">Log out</button>
     </div>
     <div class="adslot adTitle" id="adTitle"></div>
     <p class="tLive" id="titleLive" style="display:none"></p>
@@ -737,7 +740,7 @@
 
 <div class="overlay hidden" id="lodge">
   <div class="card">
-    <button id="menuBtn" class="backBtn">← Main menu</button>
+    <div class="lodgeTop"><button id="menuBtn" class="backBtn">← Main menu</button><button id="logoutBtn" class="backBtn acctBtn">Log out</button></div>
     <h1>Ridgeline Season<span>North Slope Outfitters · Est. this season</span></h1>
     <div class="row">
       <div class="stat"><b id="lRank">Greenhorn</b><small id="lXp">0 XP</small><div class="xpbar"><div id="lXpBar" style="width:0%"></div></div></div>
@@ -1261,7 +1264,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v10';   // bump this whenever you change the policy
+const BUILD = 'arena-v11';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1759,7 +1762,7 @@ class WebSocketAdapter{
           this.auth=!!m.authoritative; this.guest=!!m.guest; this.build=m.build||''; if(m.resume)this.resumeKey=m.resume; if(m.seconds)matchSeconds=m.seconds;
           if(onWelcome)onWelcome({seed:m.seed>>>0,you:m.id,auth:this.auth,guest:this.guest,build:this.build,resumed:!!m.resumed}); }
         else if(m.t==='warmup'){ if(this.onEvent)this.onEvent({t:'warmup',seconds:m.seconds,players:m.players,defense:!!m.defense,team:m.team}); }
-        else if(['wave','break','hp','down','revived','secondwind','over','bought','respawn','mauledDown','eliminated','final'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
+        else if(['wave','break','hp','down','revived','secondwind','over','bought','respawn','mauledDown','eliminated','final','flare','flared','lastchance'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
         else if(m.t==='start'){ if(this.onEvent)this.onEvent({t:'start',seconds:m.seconds,players:m.players}); }
         else if(m.t==='end'){ if(this.onEvent)this.onEvent({t:'end',board:m.board}); }
         else if(m.t==='shotResult'){ if(this.onEvent)this.onEvent({t:'shotResult',...m}); }
@@ -1772,8 +1775,9 @@ class WebSocketAdapter{
         else if(m.t==='states'){ for(const st of m.players||[]){ const p=this.map[st.id]; if(!p)continue; p.tx=st.x; p.tz=st.z; p.yaw=st.yaw; p.score=st.score|0; p.kills=st.kills|0; if(st.firing)p.firing=.25; }
           if(m.animals)applyRemoteAnimals(m.animals);
           if(m.mode==='defense'){ DEF.phase=m.phase; DEF.wave=m.wave|0; DEF.left=m.predsLeft|0; DEF.secs=m.seconds||0;
-            const me=(m.players||[]).find(q=>q.id===this.id); if(me){ DEF.pts=me.pts|0; DEF.max=me.max||100; if(!DEF.down)health=me.hp; DEF.down=!!me.down; }
-            DEF.team=(m.players||[]).filter(q=>q.id!==this.id).map(q=>({name:(this._peers.find(x=>x.id===q.id)||{}).name||'',hp:q.hp,max:q.max,down:q.down,bot:q.bot})); }
+            const me=(m.players||[]).find(q=>q.id===this.id); if(me){ DEF.pts=me.pts|0; DEF.max=me.max||100; if(!DEF.down)health=me.hp; DEF.down=!!me.down;
+              DEF.flares=me.fl==null?DEF.flares:me.fl; DEF.rv=me.rv||0; }
+            DEF.team=(m.players||[]).filter(q=>q.id!==this.id).map(q=>({id:q.id,name:(this._peers.find(x=>x.id===q.id)||{}).name||'',hp:q.hp,max:q.max,down:!!q.down,bot:!!q.bot,x:q.x,z:q.z,rv:q.rv||0,rvg:q.rvg||null})); }
           if(m.mode!=='defense'){ const meA=(m.players||[]).find(q=>q.id===this.id);
             if(meA){ ARENA.lives=meA.lives==null?3:meA.lives; ARENA.out=!!meA.out; ARENA.dead=(meA.hp<=0)&&!meA.out; if(!ARENA.dead&&!ARENA.out&&meA.hp)health=meA.hp; } }
           if(m.phase==='warm'){ warmup=Math.max(0,m.seconds||0); } else { warmup=0; if(typeof m.seconds==='number'&&m.mode!=='defense')timeLeft=m.seconds; } }
@@ -1901,6 +1905,12 @@ async function api(path,body,method){ const base=httpBase(); if(!base)throw new 
     throw new Error(j.error||('Something went wrong ('+r.status+')')); }
   return j; }
 function acctUI(){ const on=!!account;
+  const lb=$('logoutBtn'), tl=$('tLogout');
+  if(lb)lb.textContent=on?('Log out · '+account.name):'Sign in / create account';
+  // Always offer the way out on the title screen: signed in it logs you out,
+  // playing as a guest it takes you to the sign-in screen so you can make an
+  // account without hunting through the menus for it.
+  if(tl){ tl.style.display=''; tl.textContent=on?'Log out':'Sign in'; }
   if($('acctOut'))$('acctOut').classList.toggle('hidden',!on); if($('acctIn'))$('acctIn').classList.toggle('hidden',on);
   if(on){ setTxt('acctName',account.name); setTxt('acctSummary',`· ${account.harvests||0} harvests · ${account.arenaWins||0} arena wins · best arena ${account.bestArena||0}`); } }
 async function acctRegister(){ try{ save.server=$('pServer').value.trim(); persist(); setTxt('acctStatus','Creating account…');
@@ -1932,6 +1942,9 @@ async function deleteMyAccount(){
   }catch(e){ setTxt('dataState',e.message); }
 }
 async function acctLogout(){ try{ await api('/api/logout',{}); }catch(e){} save.token=''; account=null; persist(); acctUI(); setTxt('acctStatus','Signed out.'); }
+// Log out from anywhere: sign out, then back to the sign-in screen so it is
+// obvious it worked and the next person can sign in as themselves.
+async function logoutToEntry(){ if(NETA){NETA.stop();NETA=null;} running=false; await acctLogout(); showEntryForced(); }
 async function acctSync(){ try{ const {token,...rest}=save; await api('/api/cloud',{save:rest}); setTxt('acctStatus','Progress backed up.'); }catch(e){ setTxt('acctStatus',e.message); } }
 let liveTimer=null, SERVER_OK=null, SERVER_BUILD='', SERVER_STORE='';
 async function pollPresence(){
@@ -2593,12 +2606,22 @@ function aimSpread(){
   if(P.stamina<35)s*=1.6;            // out of breath
   return s;
 }
+function fireFlare(){
+  if(!NETA||!DEF.on||!DEF.down)return;
+  if((DEF.flares|0)<=0){ callout={text:'No flare left',sub:'Hold on — a teammate has to reach you',c:'#e0b45a',t:1.8}; sfxClick(0,900); return; }
+  NETA.emit({t:'flare'}); tone(1400,.08,.25,'square'); tone(700,.5,.3,'sawtooth',.05);
+}
 function fire(){
-  if(DEF.on&&DEF.down)return;
+  if(DEF.on&&DEF.down){ fireFlare(); return; }
   if(mode==='arena'&&(ARENA.dead||ARENA.out))return;
   if(!running||dying||reloading>0)return;
   if(arenaAuth&&NETA){
     if(NET.lost){ sfxClick(0,1100); if(!callout||callout.t<.5)callout={text:'No connection',sub:'Hold on — getting you back in',c:'#ffb03b',t:1.2}; return; }
+    // Same pace as the server, so a quick click is just the bolt not being
+    // ready yet — not a round spent on a shot that was going to be refused.
+    const cd=DEF.on?(weapon==='bow'?.75:.5)*(1-.15*((DEF.up&&DEF.up.rate)|0)):(weapon==='bow'?1.0:.8);
+    if(nowMs()-lastNetShot<cd*1000){ sfxClick(0,1700); return; }
+    lastNetShot=nowMs();
     if(weapon==='rifle'){ if(ammo<=0){ sfxClick(0,1400); return; } ammo--; sfxShot(); flash=.08; recoil=1;
       for(let i=0;i<12;i++)particles.push({x:cx+W*.07,y:H*.53,vx:rnd(-40,40)-60,vy:rnd(-90,-20),life:rnd(.6,1.4),c:'#c9c4b6',sz:rnd(6,16),smoke:true});
       P.pitch=clamp(P.pitch+.04*(scoped?.6:1),-.7,.7); }
@@ -3018,7 +3041,10 @@ function drawCompass(){
   const y=TOUCH_UI?18:22, w=Math.min(W*(W<400?.34:W<560?.40:.5),360); ctx.fillStyle='rgba(0,0,0,.35)'; ctx.fillRect(cx-w/2,y,w,26);
   ctx.font='bold 12px Trebuchet MS,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
   const marks=[['N',0],['NE',.785],['E',1.571],['SE',2.356],['S',3.142],['SW',3.927],['W',4.712],['NW',5.498]];
-  for(const [l,a] of marks){ const d=wrap(a-P.yaw); if(Math.abs(d)<1.1){ const x=cx+d/1.1*w/2; ctx.fillStyle=l.length===1?'#f1ebdc':'rgba(241,235,220,.55)'; ctx.fillText(l,x,y+13); } }
+  // Two-letter marks are held a little inside the strip so they cannot spill
+  // out over the clock and the score on a narrow phone.
+  const inset=w/2-12;
+  for(const [l,a] of marks){ const d=wrap(a-P.yaw); if(Math.abs(d)<1.1){ const x=cx+d/1.1*inset; ctx.fillStyle=l.length===1?'#f1ebdc':'rgba(241,235,220,.55)'; ctx.fillText(l,x,y+13); } }
   const sd=wrap(0.9-P.yaw); if(Math.abs(sd)<1.1){ ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.arc(cx+sd/1.1*w/2,y+4,3,0,TAU); ctx.fill(); }
   ctx.fillStyle='#ff6a13'; ctx.fillRect(cx-1,y,2,26);
   // Whatever is hunting you gets its own mark on the compass, so you can turn
@@ -3158,6 +3184,7 @@ function updateThreats(dt){
 }
 function drawHUD(){
   ctx.textBaseline='alphabetic'; ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=6;
+  CBAND=null; LEFTBOT=0;
   const m=Math.floor(timeLeft/60), s=Math.floor(timeLeft%60), fs=Math.round((TOUCH_UI?22:30)*HUDS);
   const hx=TOUCH_UI?52:64;   // clear of the pause chip in the top-left corner
   ctx.font=`bold ${fs}px Georgia,serif`; ctx.fillStyle='#f1ebdc'; ctx.textAlign='left';
@@ -3174,6 +3201,7 @@ function drawHUD(){
       ctx.fillStyle='rgba(255,255,255,.18)'; ctx.fillRect(hx+92,ty-8,54,6);
       ctx.fillStyle=tm.down?'#ff4d3d':'#7cff5a'; ctx.fillRect(hx+92,ty-8,54*Math.max(0,Math.min(1,(tm.hp||0)/(tm.max||100))),6);
       ty+=15; }
+    LEFTBOT=ty+6;
     ctx.font=`bold ${fs}px Georgia,serif`; ctx.fillStyle='#f1ebdc'; }
   else if(mode==='arena'){ ctx.fillText(m+':'+(s<10?'0':'')+s,hx,fs+14); ctx.font='12px Trebuchet MS,sans-serif';
     ctx.fillText('Open arena',hx,fs+32);
@@ -3212,6 +3240,7 @@ function drawHUD(){
   const portrait=TOUCH_UI&&H>W;
   const ax=portrait?20:TOUCH_UI?Math.max(176,cx-260):24,
     ay=H-(portrait?215:TOUCH_UI?28:26)-(TOUCH_UI?0:controlsH());
+  if(!(DEF.on&&DEF.down)){
   ctx.font='bold 14px Trebuchet MS,sans-serif'; ctx.fillStyle='#f1ebdc';
   if(weapon==='rifle'){ for(let i=0;i<magSize();i++){ ctx.fillStyle=i<ammo?'#e0b45a':'rgba(255,255,255,.18)'; ctx.fillRect(ax+i*13,ay-40,8,24); }
     ctx.fillStyle='#f1ebdc'; ctx.fillText(reloading>0?'Reloading…':(ammo===0?'Empty — reload':SHOP[1].lv[upg('rifle')]),ax,ay); }
@@ -3227,6 +3256,7 @@ function drawHUD(){
   ctx.fillText(gait+(P.stamina<20?' · out of breath':P.stamina<50?' · winded':'')+(autoRun?' · auto-run':''),ax+118,ay+11);
 
   ctx.fillStyle='rgba(255,255,255,.2)'; ctx.fillRect(ax,ay+15,110,5); ctx.fillStyle=health>50?'#e0b45a':health>25?'#ff8c3b':'#ff3b1f'; ctx.fillRect(ax,ay+15,110*clamp(health,0,100)/100,5); ctx.fillStyle='rgba(241,235,220,.8)'; ctx.fillText('health',ax+118,ay+21);
+  }
   // detection eye
   const ex=cx, ey=TOUCH_UI?60:62; if(!(mode==='arena'&&arenaAuth&&!DEF.on&&timeLeft<=10&&timeLeft>0&&running&&!ARENA.dead&&!ARENA.out)){ ctx.strokeStyle='rgba(241,235,220,.7)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(ex-16,ey); ctx.quadraticCurveTo(ex,ey-12,ex+16,ey); ctx.quadraticCurveTo(ex,ey+12,ex-16,ey); ctx.stroke();
   ctx.fillStyle=detection>=1?'#ff3b1f':detection>.5?'#ffb03b':'rgba(241,235,220,.5)'; ctx.beginPath(); ctx.arc(ex,ey,3+detection*5,0,TAU); ctx.fill(); }
@@ -3244,6 +3274,7 @@ function drawHUD(){
     const lines=wrapText(callout.sub||'',centreMaxW());
     lines.forEach((ln,i)=>ctx.fillText(ln,cx,coY+24+i*16));
     coBottom=coY+24+Math.max(0,lines.length-1)*16+12;
+    CBAND={y0:coY-30,y1:coBottom};
     ctx.globalAlpha=1; }
   if(warn&&!(mode==='arena'&&(ARENA.dead||ARENA.out||DEF.down))){ const narrow=W<620;
     const wy=Math.max(narrow?Math.min(H*.50,H-210):H*.32,coBottom+22);
@@ -3251,6 +3282,8 @@ function drawHUD(){
     ctx.fillStyle=warn.text.startsWith('BEAR')?'#ff3b1f':'#f1ebdc';
     const wl=wrapText(warn.text,centreMaxW());
     wl.forEach((ln,i)=>ctx.fillText(ln,cx,wy+i*(narrow?19:24)));
+    const wb=wy+(wl.length-1)*(narrow?19:24)+10;
+    CBAND=CBAND?{y0:Math.min(CBAND.y0,wy-26),y1:Math.max(CBAND.y1,wb)}:{y0:wy-26,y1:wb};
     ctx.globalAlpha=1; }
   for(const fl of floaters){ ctx.globalAlpha=Math.min(1,fl.t); ctx.fillStyle='#ff6a13'; ctx.font='bold 22px Georgia,serif'; ctx.fillText(fl.text,fl.x,fl.y-(1.6-fl.t)*40); ctx.globalAlpha=1; }
   if(hitMark>0){
@@ -3262,6 +3295,9 @@ function drawHUD(){
     ctx.beginPath(); for(const d of[[-1,-1],[1,-1],[-1,1],[1,1]]){ ctx.moveTo(cx+d[0]*8*grow,H/2+d[1]*8*grow); ctx.lineTo(cx+d[0]*(k==='kill'?22:16)*grow,H/2+d[1]*(k==='kill'?22:16)*grow); } ctx.stroke();
     ctx.restore(); }
   ctx.shadowBlur=0;
+  if(!TOUCH_UI&&running&&save.hideKeys){
+    ctx.save(); ctx.textAlign='center'; ctx.font='11px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.6)';
+    ctx.fillText('Press K for options',cx,document.pointerLockElement!==cv?H-26:H-10); ctx.restore(); }
   if(!TOUCH_UI&&document.pointerLockElement!==cv){
     ctx.fillStyle='rgba(241,235,220,.75)'; ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillText('WASD / arrows to move · arrows or mouse-to-screen-edge to keep turning · click to lock the mouse',cx,H-8);
   }
@@ -3287,6 +3323,7 @@ function drawHUD(){
     ctx.fillText('pos: '+P.x.toFixed(1)+','+P.z.toFixed(1)+'  focus: '+(document.activeElement?document.activeElement.tagName:'?'),16,H-26);
     ctx.fillText('press K to hide',16,H-12); }
   if(warmup>0)drawWarmup();
+  drawFlares(rdt||0); drawDownedMates();
   drawDownedOverlay();
   if(finalOn){
     const n=Math.ceil(timeLeft);
@@ -3323,10 +3360,96 @@ function drawDownedOverlay(){
   if(!DEF.on||!DEF.down)return;
   ctx.save(); ctx.fillStyle='rgba(120,0,0,.28)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center'; ctx.shadowColor='rgba(0,0,0,.8)'; ctx.shadowBlur=10;
-  const dy=W<620?H*.50:H*.46; ctx.font=`bold ${Math.min(64,W*.1,H*.14)}px Georgia,serif`; ctx.fillStyle='#ff4d3d'; ctx.fillText('DOWN',cx,dy);
-  ctx.font='14px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.9)';
-  ctx.fillText('A teammate standing beside you for 3 seconds gets you up',cx,dy+30);
+  const dy=W<620?H*.44:H*.40; ctx.font=`bold ${Math.min(64,W*.1,H*.14)}px Georgia,serif`; ctx.fillStyle='#ff4d3d'; ctx.fillText('DOWN',cx,dy);
+  const small=W<620?12:14; ctx.font=small+'px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.92)';
+  // who is coming for you, and how far away they are
+  const mates=DEF.team.filter(t=>!t.down&&typeof t.x==='number');
+  let near=null, nd=1e9; for(const t of mates){ const d=Math.hypot(t.x-P.x,t.z-P.z); if(d<nd){nd=d;near=t;} }
+  const rescuer=DEF.team.find(t=>t.rvg&&NETA&&t.rvg===NETA.id);
+  let line=near?((rescuer?rescuer.name+' is coming for you':'Nearest teammate: '+(near.name||'hunter'))+' — '+Math.round(nd)+' m away'):'Nobody left standing to reach you';
+  // Every line here goes through the wrapper: these sentences are long and a
+  // phone held sideways is narrow, and a line that runs off the side is useless.
+  const lh=small+4;
+  let y=dy+28;
+  const say=s=>{ for(const ln of wrapText(s,centreMaxW())){ ctx.fillText(ln,cx,y); y+=lh; } };
+  say(line);
+  // the rescue bar
+  y+=4;
+  if(DEF.rv>0){ const bw=Math.min(260,W*.6), bx=cx-bw/2;
+    ctx.fillStyle='rgba(255,255,255,.2)'; ctx.fillRect(bx,y,bw,8);
+    ctx.fillStyle='#7cff5a'; ctx.fillRect(bx,y,bw*DEF.rv,8);
+    y+=26; ctx.fillStyle='#7cff5a'; say('Being picked up… '+Math.round(DEF.rv*100)+'%'); }
+  else { ctx.fillStyle='rgba(241,235,220,.92)'; say('A teammate standing beside you for 3 seconds gets you up'); }
+  // the flare
+  y+=12;
+  if((DEF.flares|0)>0){
+    ctx.font='bold '+(small+3)+'px Trebuchet MS,sans-serif'; ctx.fillStyle='#ffb03b';
+    say(TOUCH_UI?'Tap FIRE to shoot your flare':'Click to shoot your flare');
+    ctx.font=small+'px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.8)';
+    y+=4; say('One per run — it gets you up and scares off what is on you');
+  } else { ctx.fillStyle='rgba(241,235,220,.6)'; say('Flare already used this run'); }
   ctx.restore();
+}
+// Teammates lying on the ground, marked wherever they are — on screen if they
+// are in front of you, at the edge of the screen if not — with how far to go.
+function drawDownedMates(){
+  if(!DEF.on||!DEF.team||DEF.down)return;          // down yourself? your own screen says who is coming
+  const mates=DEF.team.filter(t=>t.down&&typeof t.x==='number').slice(0,3);
+  if(!mates.length)return;
+  const safeBot=TOUCH_UI?H*.55:H*.72;
+  // A callout or a warning owns the middle of the screen while it is up, and the
+  // squad list owns the top-left. The markers start below whichever is in the way.
+  const clear=y0=>CBAND&&y0+22>CBAND.y0&&y0-16<CBAND.y1?CBAND.y1+12:y0;
+  const base=Math.max(96,H*.2);
+  const rightTop=clear(base), leftTop=clear(Math.max(base,LEFTBOT));
+  const used=[];
+  let leftN=0, rightN=0;
+  for(const t of mates){
+    const d=Math.hypot(t.x-P.x,t.z-P.z);
+    const ang=wrap(Math.atan2(t.x-P.x,t.z-P.z)-P.yaw);
+    const pr=Math.abs(ang)<1.1?project(t.x,t.z,2.6):null;
+    const inView=pr&&pr.sx>70&&pr.sx<W-70;
+    let x,y,align;
+    if(inView){ x=pr.sx; y=clear(Math.max(base,Math.min(safeBot-44,pr.gy-pr.s*2.4))); align='center';
+      for(let g=0;g<6&&used.some(u=>Math.abs(u.x-x)<170&&Math.abs(u.y-y)<40);g++)y+=42; }
+    else if(ang>0){ x=W-18; y=rightTop+rightN*58; rightN++; align='right'; }
+    else { x=18; y=leftTop+leftN*58; leftN++; align='left'; }
+    if(y>safeBot-44)continue;                                      // no room: the minimap still shows them
+    used.push({x,y});
+    const pulse=.75+.25*Math.sin(time*6);
+    ctx.save(); ctx.shadowColor='rgba(0,0,0,.85)'; ctx.shadowBlur=8;
+    const ix=align==='center'?x:align==='right'?x-11:x+11;       // the cross sits at the edge, text reads inward
+    ctx.fillStyle=`rgba(255,77,61,${pulse})`;
+    ctx.fillRect(ix-3,y-11,6,22); ctx.fillRect(ix-11,y-3,22,6);
+    ctx.textAlign=align;
+    const tx=align==='center'?x:align==='right'?x-28:x+28;
+    const ty=align==='center'?y+26:y+4;
+    ctx.font='bold 11px Trebuchet MS,sans-serif'; ctx.fillStyle='#fff';
+    ctx.fillText((t.name||'Hunter').slice(0,12)+' DOWN'+(inView?'':(ang>0?' →':'')),tx,ty);
+    if(!inView&&ang<0){ ctx.textAlign='left'; }
+    ctx.font='11px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.9)';
+    ctx.fillText(t.rv>0?('picking up '+Math.round(t.rv*100)+'%'):(Math.round(d)+' m — go'),tx,ty+14);
+    ctx.restore(); }
+}
+// A flare: a red light that climbs into the sky over where it was fired and
+// hangs there, so everybody can see where to go.
+function drawFlares(dt){
+  if(!FLARES.length)return;
+  for(const f of FLARES)f.t+=dt;
+  FLARES=FLARES.filter(f=>f.t<9);
+  for(const f of FLARES){
+    const rise=Math.min(1,f.t/1.3), alt=4+rise*38;
+    const pr=project(f.x,f.z,alt); if(!pr)continue;
+    const fade=f.t>6?Math.max(0,1-(f.t-6)/3):1;
+    const r=Math.max(3,Math.min(26,pr.s*1.2))*(1+.15*Math.sin(time*20));
+    ctx.save(); ctx.globalAlpha=fade;
+    const g=ctx.createRadialGradient(pr.sx,pr.gy,0,pr.sx,pr.gy,r*5);
+    g.addColorStop(0,'rgba(255,90,60,.95)'); g.addColorStop(.25,'rgba(255,60,40,.45)'); g.addColorStop(1,'rgba(255,40,20,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(pr.sx,pr.gy,r*5,0,TAU); ctx.fill();
+    ctx.fillStyle='#fff6e0'; ctx.beginPath(); ctx.arc(pr.sx,pr.gy,r*.45,0,TAU); ctx.fill();
+    if(rise<1){ const base=project(f.x,f.z,4); if(base){ ctx.strokeStyle='rgba(255,200,160,.6)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(base.sx,base.gy); ctx.lineTo(pr.sx,pr.gy); ctx.stroke(); } }
+    ctx.restore(); }
 }
 function drawDefLobby(){
   const secs=Math.ceil(warmup);
@@ -3391,6 +3514,8 @@ function drawMinimap(){
       ctx.beginPath(); ctx.arc(x,y,6*pulse,0,TAU); ctx.stroke();
     } else { ctx.fillStyle='rgba(200,200,190,.45)'; ctx.beginPath(); ctx.arc(x,y,1.5,0,TAU); ctx.fill(); } }
   for(const r of rivals){ const [x,y]=rel(r.x,r.z); ctx.fillStyle=r.color; ctx.beginPath(); ctx.arc(x,y,3.2,0,TAU); ctx.fill(); }
+  if(DEF.on&&DEF.team)for(const t of DEF.team){ if(!t.down||typeof t.x!=='number')continue;
+    const [x,y]=rel(t.x,t.z); if(Math.sin(time*8)>-.3){ ctx.fillStyle='#ff4d3d'; ctx.fillRect(x-1.5,y-5,3,10); ctx.fillRect(x-5,y-1.5,10,3); } }
   ctx.fillStyle='#ff6a13'; ctx.beginPath(); ctx.moveTo(mx,my-5); ctx.lineTo(mx-4,my+4); ctx.lineTo(mx+4,my+4); ctx.closePath(); ctx.fill();
   ctx.restore();
 }
@@ -3725,7 +3850,10 @@ let ARENA={lives:3,out:false,dead:false,deadT:0,finalT:0,leader:null};
 let NET={lost:false,t:0,gaveUp:false,drops:0,backs:0};
 // Being chewed on by something you never saw is the worst thing in the wave
 // mode. We keep the direction of the last bite and point at it.
-let hurtFrom=null;
+let hurtFrom=null, FLARES=[], lastNetShot=0;
+// Where the big centred messages and the top-left squad list ended up this
+// frame, so the downed-teammate markers can keep out of their way.
+let CBAND=null, LEFTBOT=0;
 const nowMs=()=>(window.performance&&performance.now?performance.now():Date.now());
 function netLost(){ if(NET.lost)return; NET.lost=true; NET.t=0; NET.drops++;
   callout={text:'Connection lost',sub:'Holding your score — trying to get you back in',c:'#ffb03b',t:3};
@@ -4170,14 +4298,27 @@ function onNetEvent(ev){
     if(!ev.hit){ const n=ev.near;
       callout={text:'Miss',sub:n?(n.by+' m '+n.where+' of the '+(SP[n.sp]?SP[n.sp].name.toLowerCase():'animal')+' at '+n.dist+' m'):'nothing out there',c:'#f1ebdc',t:1.6};
       return; }
-    stats.hits++; hitMark=.35; hitKind=ev.hit.killed?'kill':(ev.hit.zone==='vital'||ev.hit.zone==='body')?'wound':'graze'; if(ev.hit.killed)killKick=.5;
+    if(ev.hit.nodmg){ hitMark=.25; hitKind='graze'; sfxHit(false);
+      callout={text:'No damage — too far for a body shot',sub:ev.hit.note||'Aim for the head or the vitals',c:'#e0b45a',t:2.2}; return; }
+    stats.hits++; hitMark=.35; hitKind=ev.hit.killed?'kill':(ev.hit.zone==='vital'||ev.hit.zone==='body'||ev.hit.zone==='head')?'wound':'graze'; if(ev.hit.killed)killKick=.5;
     const a=remoteAnimals.get(ev.hit.id); if(a){ a.hurtT=.3; const pp=project(a.x,a.z,0); if(pp){ const n=ev.hit.killed?20:10; for(let i=0;i<n;i++)particles.push({x:pp.sx,y:pp.gy-pp.s*SP[a.sp].k*SP[a.sp].bodyY,vx:rnd(-1.4,1.4)*pp.s*1.6,vy:rnd(-1.8,.4)*pp.s,life:rnd(.35,.9),c:i%3?'#8a0f0f':'#c41d1d',sz:Math.max(1.5,pp.s*.07)}); } }
     const spn=a?SP[a.sp].name:'animal';
     if(ev.hit.killed){ score=ev.score; stats.kills[a?a.sp:'deer']=(stats.kills[a?a.sp:'deer']||0)+1; if(ev.hit.trophy)stats.trophies++;
       sfxHit(true); pushFeed('You took a '+spn.toLowerCase(),'+'+ev.hit.pts,'#ff6a13');
       callout={text:(ev.hit.trophy?'TROPHY! ':'')+(ev.hit.zone==='vital'?'Clean kill':ev.hit.zone==='head'?'Head shot':'Dropped')+' — '+spn,sub:Math.round(ev.hit.dist)+' m  ·  +'+ev.hit.pts,c:'#ff6a13',t:3}; }
-    else { sfxHit(false); callout={text:'Wounded — '+spn,sub:ev.hit.zone+' hit  ·  it is running',c:'#e0b45a',t:2}; }
+    else { sfxHit(false);
+      const left=typeof ev.hit.hpFrac==='number'?Math.max(0,Math.round(ev.hit.hpFrac*100)):null;
+      const isPred=a&&a.pred;
+      callout={text:(ev.hit.zone==='head'?'Head shot':ev.hit.zone==='vital'?'Vital hit':ev.hit.zone==='leg'?'Leg hit':'Body hit')+' — '+spn,
+        sub:isPred?(left!=null?left+'% left  ·  '+Math.round(ev.hit.dist)+' m':'keep shooting'):'it is running',
+        c:ev.hit.zone==='head'?'#ff6a13':'#e0b45a',t:1.8}; }
     return; }
+  if(ev.t==='flare'){ FLARES.push({x:ev.x,z:ev.z,t:0,name:ev.name});
+    if(NETA&&ev.id===NETA.id){ DEF.down=false; callout={text:'Flare up — back on your feet',sub:'Whatever was on you has scattered. Move.',c:'#ff4d3d',t:3}; }
+    else { pushFeed(ev.name+' fired a flare','','#ff4d3d'); callout={text:ev.name+' fired a flare',sub:'Look for the red light in the sky',c:'#ff4d3d',t:2.4}; }
+    tone(220,.6,.25,'sawtooth'); return; }
+  if(ev.t==='flared'){ if(ev.ok){ DEF.down=false; health=ev.hp; DEF.flares=ev.flares; } else callout={text:'No flare',sub:ev.why||'',c:'#e0b45a',t:1.6}; return; }
+  if(ev.t==='lastchance'){ warn={text:'EVERYONE IS DOWN',t:3}; callout={text:'Last chance',sub:DEF.down&&DEF.flares>0?'Fire your flare — click / press FIRE':'Someone still has a flare…',c:'#ff4d3d',t:4}; tone(300,.3,.3,'square'); return; }
   if(ev.t==='wave'){ DEF.on=true; DEF.phase='wave'; DEF.wave=ev.n; DEF.shop=null; $('defShop').classList.add('hidden');
     DEF.bearing=(typeof ev.bearing==='number')?ev.bearing:null;
     warn={text:'WAVE '+ev.n+(ev.from?' — FROM THE '+ev.from.toUpperCase():''),t:3.4}; sfxRoar();
@@ -4407,7 +4548,10 @@ $('sellAll').addEventListener('click',()=>{ let got=0;
   for(const k of Object.keys(save.inv||{})){ if(MATS[k]){ got+=MATS[k].price*invCount(k); delete save.inv[k]; } }
   save.cash+=got; persist(); renderLodge(); });
 $('acctLogin').addEventListener('click',acctLogin); $('acctRegister').addEventListener('click',acctRegister);
-$('acctLogout').addEventListener('click',acctLogout); $('acctSync').addEventListener('click',acctSync);
+$('acctLogout').addEventListener('click',logoutToEntry);
+$('logoutBtn').addEventListener('click',()=>{ if(account)logoutToEntry(); else showEntryForced(); });
+$('tLogout').addEventListener('click',()=>{ if(account)logoutToEntry(); else showEntryForced(); });
+$('acctSync').addEventListener('click',acctSync);
 document.querySelectorAll('button[data-lb]').forEach(b=>b.addEventListener('click',()=>{ lbBy=b.dataset.lb; document.querySelectorAll('button[data-lb]').forEach(x=>x.classList.toggle('on',x===b)); loadLeaderboard(); }));
 document.querySelectorAll('button[data-lbs]').forEach(b=>b.addEventListener('click',()=>{ lbSeason=+b.dataset.lbs; document.querySelectorAll('button[data-lbs]').forEach(x=>x.classList.toggle('on',x===b)); loadLeaderboard(); }));
 $('pServer').addEventListener('change',()=>{ save.server=$('pServer').value.trim(); persist(); acctResume(); checkServerCapabilities(); loadLeaderboard(); loadChalBoard(); });
