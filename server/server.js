@@ -56,7 +56,7 @@ function corsFor(req) {
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v11';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v12';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -1026,18 +1026,24 @@ function resolveShot(room, p, m, opts) {
 // that come straight for them. Kills and tags earn points; between waves the
 // points buy gear. Everyone down at once and the run is over. Runs on the
 // server so every player fights the same animals at the same moment.
-const DEF_WARMUP = 12, DEF_BREAK = 7, DEF_MAX = 6;   // a breath between waves, not a shopping trip
+const DEF_WARMUP = 12, DEF_BREAK = 20, DEF_MAX = 6, BOT_REVIVES = 2;
+// Twenty seconds between waves is enough to read the shop and buy something.
+// When every real player has pressed Ready the next wave comes in 3 seconds,
+// so nobody sits waiting on the clock.
 const SHOP = {
-  ammo:   { name: 'Resupply',          cost: w => 90 + 10 * w,    max: 99, desc: 'Full magazine and quiver' },
-  damage: { name: 'Heavier loads',     cost: w => 540 + 160 * w,  max: 5,  desc: '+25% damage per level' },
-  rate:   { name: 'Faster action',     cost: w => 460 + 140 * w,  max: 4,  desc: 'Shoot sooner after each shot' },
-  health: { name: 'Thicker hide',      cost: w => 560 + 200 * w,  max: 5,  desc: '+40 max health, healed now' },
-  revive: { name: 'Second wind',       cost: w => 260 + 90 * w,    max: 2,  desc: 'Get up once on your own' },
+  // Priced so a clean first wave (two bears, about 420 points) buys one real
+  // upgrade. Ammo is no longer for sale: every wave starts with a full
+  // magazine and a full quiver.
+  damage: { name: 'Heavier loads',     cost: w => 300 + 90 * w,   max: 5,  desc: '+25% damage per level' },
+  rate:   { name: 'Faster action',     cost: w => 260 + 80 * w,   max: 4,  desc: 'Shoot sooner after each shot' },
+  health: { name: 'Thicker hide',      cost: w => 320 + 100 * w,  max: 5,  desc: '+40 max health, healed now' },
+  revive: { name: 'Second wind',       cost: w => 200 + 60 * w,   max: 2,  desc: 'Get up once on your own' },
+  flare:  { name: 'Spare flare',       cost: w => 180 + 40 * w,   max: 3,  desc: 'One more flare for when you are down' },
 };
 function isDefense(room) { return room.mode === 'defense'; }
 function defPlayerInit(p) {
   p.hp = 100; p.maxHp = 100; p.down = false; p.downT = 0; p.reviveT = 0;
-  p.pts = 0; p.up = { damage: 0, rate: 0, health: 0, revive: 0, ammo: 0 };
+  p.pts = 0; p.up = { damage: 0, rate: 0, health: 0, revive: 0, flare: 0 };
   p.flares = 1;   // one flare a run: fire it when you are down to get yourself back up
 }
 function teamCentre(room) {
@@ -1081,6 +1087,7 @@ function waveRoster(n, players) {
 }
 function defStartWave(room) {
   room.wave++; room.phase = 'wave'; room.running = true;
+  for (const p of room.players.values()) p.botRevives = 0;
   // Bots fight, but badly on purpose — they are worth about a third of a person
   // when sizing a wave, or a lobby full of them makes solo play harder than
   // being genuinely alone.
@@ -1106,7 +1113,8 @@ function defStartWave(room) {
 }
 function defStartBreak(room) {
   room.phase = 'break'; room.breakLeft = DEF_BREAK;
-  for (const p of room.players.values()) { p.hp = p.maxHp; p.down = false; }
+  for (const p of room.players.values()) { p.hp = p.maxHp; p.down = false; p.ready = false; p.reviveT = 0; }
+  gatherBots(room);
   broadcast(room, { t: 'break', seconds: DEF_BREAK, wave: room.wave, shop: shopFor(room) });
 }
 function shopFor(room) {
@@ -1121,6 +1129,7 @@ function defStartRun(room) {
   for (let i = 0; i < 8; i++) room.animals.push(spawnAnimal(room));
   balanceBots(room);
   for (const p of room.players.values()) defPlayerInit(p);
+  gatherBots(room);
   broadcast(room, { t: 'warmup', seconds: DEF_WARMUP, players: room.players.size, defense: true,
     team: [...room.players.values()].map(q => ({ id: q.id, name: q.name, bot: !!q.bot, color: q.color })) });
 }
@@ -1228,6 +1237,7 @@ function stepPredator(room, a, dt) {
   }
   tgt.hp -= Math.round(s.bite * (1 + .05 * (a.wave - 1)));
   send(tgt.ws, { t: 'hp', hp: Math.max(0, tgt.hp), max: tgt.maxHp, by: a.sp, ax: +a.x.toFixed(1), az: +a.z.toFixed(1) });
+  if (tgt.hp <= 0 && tgt.bot && tgt.reviving) tgt.hp = 1;   // it stays on its feet until you are up
   if (tgt.hp <= 0 && !tgt.down) {
     if (tgt.up && tgt.up.revive > 0) { tgt.up.revive--; tgt.hp = Math.round(tgt.maxHp * .5); send(tgt.ws, { t: 'secondwind', hp: tgt.hp }); }
     else { tgt.down = true; tgt.downT = 0; tgt.reviveT = 0; broadcast(room, { t: 'down', id: tgt.id, name: tgt.name }); }
@@ -1243,6 +1253,11 @@ function defTick(room, dt) {
   }
   if (room.phase === 'break') {
     room.breakLeft -= dt;
+    // everybody real has pressed Ready: no point making them watch the clock
+    const people = [...room.players.values()].filter(p => !p.bot && !p.gone);
+    if (people.length && people.every(p => p.ready) && room.breakLeft > 3) {
+      room.breakLeft = 3; broadcast(room, { t: 'readyall', seconds: 3 });
+    }
     for (const a of room.animals) if (!a.pred) updateAnimal(room, a, dt);
     if (room.breakLeft <= 0) defStartWave(room);
     return;
@@ -1254,10 +1269,25 @@ function defTick(room, dt) {
   for (const p of room.players.values()) {
     if (!p.down) continue;
     p.downT += dt;
-    let helper = false;
-    for (const q of room.players.values()) if (q !== p && !q.down && Math.hypot(q.x - p.x, q.z - p.z) < 4) helper = true;
-    p.reviveT = helper ? p.reviveT + dt : Math.max(0, p.reviveT - dt * 2);
-    if (p.reviveT >= 3) { p.down = false; p.hp = Math.round(p.maxHp * .6); p.reviveT = 0; broadcast(room, { t: 'revived', id: p.id, name: p.name, hp: p.hp }); }
+    // Who is beside them: a real teammate always counts; a bot counts only
+    // while it still has a rescue to give this person this wave (two). Past
+    // that it is your flare or a real person — or standing still would win.
+    let helper = 0, byPerson = false;
+    const botOk = !p.bot && (p.botRevives | 0) < BOT_REVIVES;
+    for (const q of room.players.values()) {
+      if (q === p || q.down || Math.hypot(q.x - p.x, q.z - p.z) >= 4) continue;
+      if (!q.bot) { helper = Math.max(helper, 1); byPerson = true; }
+      else if (botOk) helper = Math.max(helper, 1.5);
+    }
+    // A bot lying down gets itself up after a while, as long as a real player
+    // is still on their feet — a squad of bodies should not stay bodies, but a
+    // wipe is still a wipe.
+    const humanUp = [...room.players.values()].some(q => !q.bot && !q.down && !q.gone);
+    if (p.bot && !helper && p.downT > 12 && humanUp) helper = 1;
+    p.reviveT = helper ? p.reviveT + dt * helper : Math.max(0, p.reviveT - dt * 2);
+    p.revBy = helper ? (byPerson ? 'person' : 'bot') : null;
+    if (p.reviveT >= 3) {
+      if (!p.bot && p.revBy === 'bot') p.botRevives = (p.botRevives | 0) + 1; p.down = false; p.hp = Math.round(p.maxHp * .6); p.reviveT = 0; broadcast(room, { t: 'revived', id: p.id, name: p.name, hp: p.hp }); }
   }
   // bots in defense fight too, crudely
   for (const p of room.players.values()) if (p.bot && !p.down) stepDefenseBot(room, p, dt);
@@ -1291,35 +1321,68 @@ function defFlare(room, p) {
   console.log(`[defense] ${p.name} fired a flare`);
   return { ok: true, hp: p.hp, flares: p.flares };
 }
+// Where a bot should stand: in a loose ring round the nearest real player,
+// each bot in its own slot, close enough to reach them in a couple of seconds.
+function botSlot(room, b) {
+  const people = [...room.players.values()].filter(q => !q.bot && !q.gone);
+  if (!people.length) return null;
+  let anchor = people[0], ad = 1e9;
+  for (const q of people) { const d = Math.hypot(q.x - b.x, q.z - b.z); if (d < ad) { ad = d; anchor = q; } }
+  const bots = [...room.players.values()].filter(q => q.bot);
+  const i = Math.max(0, bots.indexOf(b)), n = Math.max(1, bots.length);
+  const ang = (room.waveBearing || 0) + Math.PI + (i - (n - 1) / 2) * 1.1;   // behind the line the wave comes at, fanned out
+  return { x: anchor.x + Math.sin(ang) * 11, z: anchor.z + Math.cos(ang) * 11, anchor };
+}
+// Pull every bot in beside the people — at the start of a run and between
+// waves — so no bot starts a wave a hundred metres from anyone it could help.
+function gatherBots(room) {
+  for (const b of room.players.values()) {
+    if (!b.bot) continue;
+    const sl = botSlot(room, b); if (!sl) continue;
+    b.x = sl.x + (Math.random() - .5) * 3; b.z = sl.z + (Math.random() - .5) * 3;
+    b.down = false; b.reviving = null;
+  }
+}
 function stepDefenseBot(room, b, dt) {
-  // A teammate on the ground comes first: the nearest standing bot walks over
-  // and stays beside them until they are up.
-  const downed = [...room.players.values()].filter(q => q.down && !q.bot && !q.gone);
+  // A teammate on the ground comes first: the nearest standing bot sprints
+  // over and stays beside them until they are up. If a second person is down,
+  // the next-nearest bot goes for them.
+  const downed = [...room.players.values()].filter(q => q.down && !q.bot && !q.gone && (q.botRevives | 0) < BOT_REVIVES);
   if (downed.length) {
-    const standing = [...room.players.values()].filter(q => q.bot && !q.down);
+    const free = [...room.players.values()].filter(q => q.bot && !q.down);
+    const taken = new Set();
     for (const v of downed) {
-      const helper = standing.sort((x, y) => Math.hypot(x.x - v.x, x.z - v.z) - Math.hypot(y.x - v.x, y.z - v.z))[0];
+      const helper = free.filter(q => !taken.has(q))
+        .sort((x, y) => Math.hypot(x.x - v.x, x.z - v.z) - Math.hypot(y.x - v.x, y.z - v.z))[0];
+      if (!helper) break;
+      taken.add(helper);
       if (helper === b) {
         const d = Math.hypot(v.x - b.x, v.z - b.z);
         b.yaw = Math.atan2(v.x - b.x, v.z - b.z);
-        if (d > 2.5) { const sp = Math.min(6.5, d); b.x += Math.sin(b.yaw) * sp * dt; b.z += Math.cos(b.yaw) * sp * dt; }
+        if (d > 1.8) { const sp = Math.min(8.5, d / dt); b.x += Math.sin(b.yaw) * sp * dt; b.z += Math.cos(b.yaw) * sp * dt; }
         b.firing = 0; b.reviving = v.id;
         return;
       }
     }
   }
   b.reviving = null;
+  // otherwise keep station near the people
+  const sl = botSlot(room, b);
+  if (sl) {
+    const d = Math.hypot(sl.x - b.x, sl.z - b.z);
+    if (d > 3) { const h = Math.atan2(sl.x - b.x, sl.z - b.z), sp = d > 25 ? 7 : 4.2;
+      b.x += Math.sin(h) * Math.min(sp, d) * dt; b.z += Math.cos(h) * Math.min(sp, d) * dt; }
+  }
   let best = null, bd = 1e9;
   for (const a of room.animals) { if (!a.pred || a.state === 'dead') continue; const d = Math.hypot(a.x - b.x, a.z - b.z); if (d < bd) { bd = d; best = a; } }
   b.firing = 0;
   if (!best) return;
   const want = Math.atan2(best.x - b.x, best.z - b.z);
   b.yaw += wrap(want - b.yaw) * Math.min(1, dt * 2.5);
-  if (bd < 9) { b.x -= Math.sin(b.yaw) * 2.6 * dt; b.z -= Math.cos(b.yaw) * 2.6 * dt; }   // back off
   b.cool -= dt; if (b.cool > 0) return;
   b.cool = 1.6 + Math.random();
   b.firing = 1;
-  if (Math.random() < b.skill * .5) {                      // bots chip away; the people finish the job
+  if (bd < 120 && Math.random() < b.skill * .5) {           // bots chip away; the people finish the job
     best.hp -= .5;
     if (best.hp <= 0) { best.state = 'dead'; best.deadT = 0; predKilled(room, b, best, 'body', bd); }
   }
@@ -1363,7 +1426,8 @@ function defBuy(room, p, item) {
   const cost = it.cost(room.wave); if ((p.pts | 0) < cost) return { ok: false, why: 'Not enough points' };
   p.pts -= cost; p.up[item] = lvl + 1;
   if (item === 'health') { p.maxHp += 40; p.hp = p.maxHp; }
-  return { ok: true, item, level: p.up[item], pts: p.pts, hp: p.hp, maxHp: p.maxHp, refill: item === 'ammo' };
+  if (item === 'flare') p.flares = (p.flares | 0) + 1;
+  return { ok: true, item, level: p.up[item], pts: p.pts, hp: p.hp, maxHp: p.maxHp, flares: p.flares | 0 };
 }
 // ---------------------------------------------------------------- rooms
 function adminOk(given) {
@@ -1681,6 +1745,11 @@ wss.on('connection', (ws, req) => {
     }
     if (m.t === 'buy' && isDefense(room)) { send(ws, { t: 'bought', ...defBuy(room, p, String(m.item || '')) }); return; }
     if (m.t === 'flare' && isDefense(room)) { send(ws, { t: 'flared', ...defFlare(room, p) }); return; }
+    if (m.t === 'ready' && isDefense(room)) {
+      if (room.phase === 'break') { p.ready = true;
+        const people = [...room.players.values()].filter(q => !q.bot && !q.gone);
+        broadcast(room, { t: 'ready', id: p.id, name: p.name, n: people.filter(q => q.ready).length, of: people.length }); }
+      return; }
     if (m.t === 'shot' && p.out) { send(ws, { t: 'shotResult', ok: false, why: 'You are out — watching until the match ends' }); return; }
     if (m.t === 'shot' && p.hp <= 0 && !isDefense(room)) { send(ws, { t: 'shotResult', ok: false, why: 'Down — back on your feet in a moment' }); return; }
     if (m.t === 'shot' && room.phase === 'warm') { send(ws, { t: 'shotResult', ok: false, why: 'Warm-up — the match has not started' }); return; }
@@ -1793,7 +1862,7 @@ setInterval(() => {
         if (q.firing) o.firing = 1;
         if (q.bot) o.bot = 1;
         if (q.down) { o.down = 1; o.rv = +Math.min(1, (q.reviveT || 0) / 3).toFixed(2); }
-        if (q.flares != null && isDefense(room)) o.fl = q.flares | 0;
+        if (q.flares != null && isDefense(room)) { o.fl = q.flares | 0; if (!q.bot) o.brl = Math.max(0, BOT_REVIVES - (q.botRevives | 0)); }
         if (q.reviving) o.rvg = q.reviving;
         if (q.pts) o.pts = q.pts | 0;
         if (q.out) o.out = 1;
