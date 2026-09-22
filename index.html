@@ -1261,7 +1261,7 @@ const POLICY_DATE   = 'September 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v8';   // bump this whenever you change the policy
+const BUILD = 'arena-v10';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1868,6 +1868,16 @@ const RIVAL_COLORS=['#e2542b','#2b7fe2','#8e2be2','#e2c02b','#2be29a','#e22b7f']
 let NETA=null;
 function serverURL(){
   const manual=(save.server||'').trim(); if(manual)return manual;
+  // Opened at ridgelineseason.com but talking to www.ridgelineseason.com is a
+  // cross-site request, and the browser blocks it with nothing more helpful
+  // than "Failed to fetch". If the page is on our own domain — with or without
+  // www — use exactly the address the page came from.
+  try{
+    const root=DEFAULT_SERVER?new URL(DEFAULT_SERVER.replace(/^ws/,'http')).hostname.replace(/^www\./,''):'';
+    const here=location.hostname.replace(/^www\./,'');
+    if(root&&here===root&&/^https?:$/.test(location.protocol))
+      return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/api';
+  }catch(e){}
   if(DEFAULT_SERVER)return DEFAULT_SERVER;
   // Served from a real website? Then the game server is this same site, behind
   // /api. Nobody should have to edit a line of code to get online play working.
@@ -1877,8 +1887,19 @@ function serverURL(){
 }
 function httpBase(){ const s=serverURL(); if(!s)return ''; return s.replace(/^wss:/,'https:').replace(/^ws:/,'http:').replace(/\/+$/,''); }
 async function api(path,body,method){ const base=httpBase(); if(!base)throw new Error('Cannot reach the game server right now');
-  const r=await fetch(base+path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json',...(save.token?{Authorization:'Bearer '+save.token}:{})},body:body?JSON.stringify(body):undefined});
-  const j=await r.json().catch(()=>({})); if(!r.ok)throw new Error(j.error||('HTTP '+r.status)); return j; }
+  let r;
+  try{ r=await fetch(base+path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json',...(save.token?{Authorization:'Bearer '+save.token}:{})},body:body?JSON.stringify(body):undefined}); }
+  catch(e){
+    // "Failed to fetch" / "Load failed" / "NetworkError" all mean the same thing:
+    // the request never reached us. Say that, in words a player can act on.
+    throw new Error('Could not reach the game server. Check your connection and try again in a moment.'); }
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){
+    if(r.status===401&&path==='/api/login')throw new Error('No account matches that name and password.');
+    if(r.status===429)throw new Error(j.error||'Too many tries — wait a few minutes and try again.');
+    if(r.status>=500)throw new Error('The game server had a problem. Try again in a minute.');
+    throw new Error(j.error||('Something went wrong ('+r.status+')')); }
+  return j; }
 function acctUI(){ const on=!!account;
   if($('acctOut'))$('acctOut').classList.toggle('hidden',!on); if($('acctIn'))$('acctIn').classList.toggle('hidden',on);
   if(on){ setTxt('acctName',account.name); setTxt('acctSummary',`· ${account.harvests||0} harvests · ${account.arenaWins||0} arena wins · best arena ${account.bestArena||0}`); } }
