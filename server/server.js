@@ -56,7 +56,7 @@ function corsFor(req) {
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v12';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v13';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -142,6 +142,24 @@ async function backup(reason) {
 // written to a file there is gone the next time the app restarts, which is why
 // accounts have to live somewhere outside the container.
 let pool = null, dbReady = false, dbBackups = 0;
+// Set when DATABASE_URL is given but the database will not answer. The game
+// keeps running for everyone; only accounts wait until the database is back.
+let dbDown = null;
+// What went wrong, in words someone can act on. Never includes the address or
+// the password — only what kind of problem it is.
+function dbProblem(msg) {
+  const m = String(msg || '');
+  if (/password authentication failed|authentication failed|password/i.test(m))
+    return 'The password in DATABASE_URL is wrong. Copy a fresh connection string from Neon and paste it into DATABASE_URL.';
+  if (/ENOTFOUND|getaddrinfo|does not look like/i.test(m))
+    return 'The address in DATABASE_URL is wrong. Copy the connection string from Neon again, the whole line.';
+  if (/timeout|ETIMEDOUT|ECONNREFUSED|ECONNRESET/i.test(m))
+    return 'The database did not answer. It may be waking up — this retries by itself every 30 seconds.';
+  if (/role .* does not exist/i.test(m))
+    return 'The user name in DATABASE_URL is wrong. Copy a fresh connection string from Neon and paste it into DATABASE_URL.';
+  if (/does not exist/i.test(m)) return 'The database name at the end of DATABASE_URL does not exist. Copy the connection string from Neon again.';
+  return 'The database could not be reached. Check DATABASE_URL in DigitalOcean.';
+}
 async function dbQuery(sql, args) { return pool.query(sql, args); }
 async function dbConnect() {
   if (!DATABASE_URL) return false;
@@ -219,6 +237,7 @@ async function flush() {
   writing = true;
   try {
     if (dbReady) { if (await safeToWrite()) await dbWrite(); }
+    else if (DATABASE_URL) { /* database expected but down: nothing is written anywhere until it is back */ }
     else {
       try {
         if (!Object.keys(DB.users).length && fs.existsSync(DATA_FILE)) {
@@ -553,8 +572,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return json(res, 204, {});
   try {
     if (url.pathname === '/' || url.pathname === '/api/status') {
-      return json(res, 200, { ok: true, build: BUILD, storage: dbReady ? 'postgres' : 'ephemeral-file', players: [...rooms.values()].reduce((a, r) => a + realCount(r), 0), rooms: rooms.size, accounts: Object.keys(DB.users).length, payments: !!(STRIPE_KEY && STRIPE_WEBHOOK_SECRET) || !!(PAYPAL_ID && PAYPAL_SECRET) });
+      return json(res, 200, { ok: true, build: BUILD,
+        storage: dbReady ? 'postgres' : DATABASE_URL ? 'database-unreachable' : 'ephemeral-file',
+        ...(dbDown ? { problem: dbDown } : {}), players: [...rooms.values()].reduce((a, r) => a + realCount(r), 0), rooms: rooms.size, accounts: Object.keys(DB.users).length, payments: !!(STRIPE_KEY && STRIPE_WEBHOOK_SECRET) || !!(PAYPAL_ID && PAYPAL_SECRET) });
     }
+    const ACCOUNT_ROUTES = ['/api/register', '/api/login', '/api/recover', '/api/me', '/api/my-data', '/api/delete-account', '/api/cloud', '/api/challenge', '/api/checkout'];
+    if (DATABASE_URL && !dbReady && ACCOUNT_ROUTES.includes(url.pathname))
+      return json(res, 503, { error: 'Accounts are offline for a moment — you can still play as a guest. Try signing in again in a minute.' });
     if (url.pathname === '/api/register' && req.method === 'POST') {
       if (limited('reg:' + ip, 5, 3600e3)) return json(res, 429, { error: 'Too many sign-ups from this address. Try later.' });
       const b = await readBody(req);
@@ -1923,13 +1947,26 @@ setInterval(() => {
 // empty account list and taking sign-ins is how people lose their progress.
 (async () => {
   if (DATABASE_URL) {
-    for (let tries = 1; ; tries++) {
-      try { await dbConnect(); break; }
+    // A few quick tries (a free database can take a moment to wake). If it
+    // still will not answer, start the game anyway — a server that exits here
+    // fails its deploy, and a failed deploy is what gets rolled back to an old
+    // build. Accounts stay switched off until the database answers.
+    for (let tries = 1; tries <= 3; tries++) {
+      try { await dbConnect(); dbDown = null; break; }
       catch (e) {
+        dbDown = dbProblem(e.message);
         console.error(`[data] database not reachable (attempt ${tries}): ${e.message}`);
-        if (tries >= 6) { console.error('[data] giving up — restarting rather than running without accounts'); process.exit(1); }
-        await new Promise(r => setTimeout(r, 5000));
+        if (tries < 3) await new Promise(r => setTimeout(r, 4000));
       }
+    }
+    if (!dbReady) {
+      console.error('[data] starting WITHOUT accounts — the game is playable, sign-in is paused. ' + dbDown);
+      const retry = setInterval(async () => {
+        try { if (pool) { try { await pool.end(); } catch (e) {} pool = null; }
+          await dbConnect(); dbDown = null; clearInterval(retry);
+          console.log('[data] database is back — accounts are on again'); }
+        catch (e) { dbDown = dbProblem(e.message); console.error('[data] database still not reachable: ' + e.message); }
+      }, 30000);
     }
   } else {
     console.error('\n  ⚠  DATABASE_URL is not set. Accounts are being written to a file inside');
