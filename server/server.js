@@ -56,7 +56,7 @@ function corsFor(req) {
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v10';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v11';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -904,12 +904,28 @@ function spook(room, x, z, radius) { const r = room.mode === 'defense' ? radius 
   for (const a of room.animals) { if (a.state === 'dead' || a.pred) continue; if (Math.hypot(a.x - x, a.z - z) < r) { a.state = 'flee'; a.t = rnd(room.mode === 'defense' ? 4 : 2, room.mode === 'defense' ? 7 : 4); } } }
 
 // The hit test. Everything a client can influence is checked here.
-function resolveShotGeneric(room, p, m) { return resolveShot(room, p, m); }
-function resolveShot(room, p, m) {
-  const now = room.time;
+function resolveShotGeneric(room, p, m) { return resolveShot(room, p, m, { paced: true }); }
+// How much a shot takes out of a bear or a cat. The head is the best shot
+// there is; inside 50 m anything that connects counts; beyond it, only a shot
+// to the head or the vitals will slow one down — a body shot at range just
+// makes it angry.
+function predDamage(zone, dist, m, mul) {
+  const base = zone === 'head' ? 3.4 : zone === 'vital' ? 2.6 : zone === 'body' ? (m && m.magnum ? 1.6 : 1.2) : .6;
+  if (dist > 50 && (zone === 'body' || zone === 'leg')) return 0;
+  return base * (mul || 1);
+}
+// Shots are paced in real time, not game time: the game clock can run a touch
+// slow under load, and two shots sent half a second apart can arrive closer
+// together than that. Allow for both, so a player firing at the proper rhythm
+// is never told "too fast".
+function tooFast(p, seconds) {
+  const t = Date.now();
+  if (t - (p.lastShotAt || 0) < seconds * 1000 * .8) return true;
+  p.lastShotAt = t; return false;
+}
+function resolveShot(room, p, m, opts) {
   const weapon = m.weapon === 'bow' ? 'bow' : 'rifle';
-  if (now - p.lastShot < (weapon === 'bow' ? 1.0 : 0.8)) return { ok: false, why: 'too fast' };
-  p.lastShot = now;
+  if (!(opts && opts.paced) && tooFast(p, weapon === 'bow' ? 1.0 : 0.8)) return { ok: false, why: 'too fast' };
   // Where the client says it fired from must agree with where the server has seen it.
   const cx = +m.x, cz = +m.z;
   if (!Number.isFinite(cx) || !Number.isFinite(cz)) return { ok: false, why: 'bad position' };
@@ -921,35 +937,68 @@ function resolveShot(room, p, m) {
   if (!Number.isFinite(yaw)) return { ok: false, why: 'bad aim' };
   spook(room, p.x, p.z, weapon === 'bow' ? 14 : 150);
   let best = null, near = null;
+  // Where each animal was a moment ago, as well as where it is now. The player
+  // aims at what their screen shows, and their screen is a few frames behind
+  // the server. Testing only the newest position is how a crosshair sitting
+  // squarely on a running bear came back as a miss.
+  const wall = Date.now();
+  // How far back to look: the few frames the picture on their screen is behind,
+  // plus however long their own line takes to carry the shot here. A player on
+  // a slow connection gets the same shot a player next to the server gets.
+  const lag = Math.min(950, 260 + (p.ws && p.ws.rtt ? p.ws.rtt : 60));
+  const ZONE_RANK = { head: 4, vital: 3, body: 2, leg: 1 };
   for (const a of room.animals) {
     if (a.state === 'dead') continue;
-    const s = SP[a.sp], dx = a.x - p.x, dz = a.z - p.z, dist = Math.hypot(dx, dz);
-    if (dist < .25 || dist > 230) continue;
-    const dyaw = wrap(Math.atan2(dx, dz) - yaw);
-    const halfWide = Math.atan2(s.rx * s.k * 1.6, Math.max(1, dist));   // how wide it looks from here
-    if (Math.abs(dyaw) > Math.max(.35, halfWide)) continue;
-    const lateral = Math.abs(dist * Math.tan(dyaw));
-    let h = 1.6 + dist * Math.tan(pitch);
-    if (weapon === 'bow') { const v = m.bowSpeed ? Math.min(80, +m.bowSpeed) : 58; const tf = dist / v; h -= 4.9 * tf * tf; }
-    const cy = s.bodyY * s.k, vert = Math.abs(h - cy);
-    let zone = null;
-    if (lateral < s.rx * s.k * .45 && vert < s.ry * s.k * .65) zone = 'vital';
-    else if (lateral < s.rx * s.k && vert < s.ry * s.k * 1.35) zone = 'body';
-    else if (lateral < s.rx * s.k && h < cy - s.ry * s.k && h > 0) zone = 'leg';
-    else if (lateral < s.rx * s.k * .6 && h > cy + s.ry * s.k && h < cy + s.ry * s.k + .6 * s.k) zone = 'head';
-    if (zone && (!best || dist < best.dist)) best = { a, zone, dist };
-    // remember the nearest thing we did NOT hit, and by how much, so a miss can
-    // tell the player what went wrong instead of just saying "miss"
-    const off = Math.hypot(lateral, h - cy);
-    if (!near || off < near.off) near = { off, side: dyaw > 0 ? 'right' : 'left', lateral,
-                                          high: h > cy, vert: Math.abs(h - cy), dist, sp: a.sp };
+    const s = SP[a.sp];
+    const spots = [{ x: a.x, z: a.z }];
+    if (a.hist) for (const h of a.hist) if (wall - h.t <= lag) spots.push(h);
+    let mine = null;
+    for (const sp of spots) {
+      const dx = sp.x - p.x, dz = sp.z - p.z, dist = Math.hypot(dx, dz);
+      if (dist < .25 || dist > 230) continue;
+      const dyaw = wrap(Math.atan2(dx, dz) - yaw);
+      const halfWide = Math.atan2(s.rx * s.k * 1.6, Math.max(1, dist));   // how wide it looks from here
+      if (Math.abs(dyaw) > Math.max(.35, halfWide)) continue;
+      const lateral = Math.abs(dist * Math.tan(dyaw));
+      let h = 1.6 + dist * Math.tan(pitch);
+      if (weapon === 'bow') { const v = m.bowSpeed ? Math.min(80, +m.bowSpeed) : 58; const tf = dist / v; h -= 4.9 * tf * tf; }
+      const cy = s.bodyY * s.k, vert = Math.abs(h - cy), w = s.rx * s.k, t = s.ry * s.k;
+      const top = cy + t + .55 * s.k;                   // top of the head / hump
+      let zone = null;
+      if (dist <= 50) {
+        // Inside 50 m, a crosshair on the animal is a hit. Full stop. Which
+        // part it hit depends on where on the animal the crosshair sat.
+        if (lateral < w * 1.25 && h > 0 && h < top + .15) {
+          if (h > cy + t * .75) zone = 'head';
+          else if (lateral < w * .5 && vert < t * .7) zone = 'vital';
+          else if (h < cy - t) zone = 'leg';
+          else zone = 'body';
+        }
+      } else {
+        if (lateral < w * .45 && vert < t * .65) zone = 'vital';
+        else if (lateral < w * .6 && h > cy + t * .75 && h < top) zone = 'head';
+        else if (lateral < w && vert < t * 1.35) zone = 'body';
+        else if (lateral < w && h < cy - t && h > 0) zone = 'leg';
+      }
+      if (zone) { const c = { a, zone, dist };
+        if (!mine || ZONE_RANK[zone] > ZONE_RANK[mine.zone]) mine = c; }
+      // remember the nearest thing we did NOT hit, and by how much, so a miss
+      // can tell the player what went wrong instead of just saying "miss"
+      const off = Math.hypot(lateral, h - cy);
+      if (!near || off < near.off) near = { off, side: dyaw > 0 ? 'right' : 'left', lateral,
+                                            high: h > cy, vert: Math.abs(h - cy), dist, sp: a.sp };
+    }
+    if (mine && (!best || mine.dist < best.dist)) best = mine;
   }
   if (!best) return { ok: true, hit: null, near: near && near.off < 6 ? {
     by: +near.off.toFixed(1), dist: Math.round(near.dist), sp: near.sp,
     where: near.vert > near.lateral ? (near.high ? 'high' : 'low') : near.side } : null };
   if (best.a.pred && room.mode !== 'defense') {      // a roaming arena bear is worth real points
-    const a = best.a; a.hp -= best.zone === 'vital' || best.zone === 'head' ? 3 : 1.2;
-    if (a.hp > 0) return { ok: true, hit: { id: a.id, zone: best.zone, dist: best.dist, killed: false } };
+    const a = best.a, dmg = predDamage(best.zone, best.dist, m, 1);
+    if (!dmg) return { ok: true, hit: { id: a.id, zone: best.zone, dist: best.dist, killed: false, nodmg: true,
+      note: 'Past 50 m only a head or vital shot stops a ' + a.sp } };
+    a.hp -= dmg;
+    if (a.hp > 0) return { ok: true, hit: { id: a.id, zone: best.zone, dist: best.dist, killed: false, hpFrac: a.hp / a.hpMax, took: +(dmg / a.hpMax).toFixed(2) } };
     a.state = 'dead'; a.deadT = 0; a.speed = 0; a.lead = false; a.leadT = 0; a.by = p.id;
     const pts = Math.round(SP.bear.pts * 3 * (1 + best.dist / 100));
     p.score += pts; p.kills++;
@@ -989,6 +1038,7 @@ function isDefense(room) { return room.mode === 'defense'; }
 function defPlayerInit(p) {
   p.hp = 100; p.maxHp = 100; p.down = false; p.downT = 0; p.reviveT = 0;
   p.pts = 0; p.up = { damage: 0, rate: 0, health: 0, revive: 0, ammo: 0 };
+  p.flares = 1;   // one flare a run: fire it when you are down to get yourself back up
 }
 function teamCentre(room) {
   let x = 0, z = 0, n = 0;
@@ -1214,9 +1264,51 @@ function defTick(room, dt) {
   const alivePred = room.animals.some(a => a.pred && a.state !== 'dead');
   if (!alivePred) { defStartBreak(room); return; }
   const anyoneUp = [...room.players.values()].some(p => !p.down);
-  if (!anyoneUp) defEnd(room);
+  if (anyoneUp) { room.lastChance = 0; return; }
+  // Everyone is down. If somebody still has a flare, give them a moment to use
+  // it rather than ending the run under them.
+  const flareLeft = [...room.players.values()].some(p => p.down && !p.bot && (p.flares | 0) > 0);
+  if (flareLeft) {
+    if (!room.lastChance) { room.lastChance = 12; broadcast(room, { t: 'lastchance', seconds: 12 }); }
+    room.lastChance -= dt;
+    if (room.lastChance > 0) return;
+  }
+  room.lastChance = 0;
+  defEnd(room);
+}
+// Down, and nobody coming? Fire the flare: it lights up the sky over you,
+// sends whatever is chewing on you running, and gets you back on your feet.
+function defFlare(room, p) {
+  if (!p.down || (p.flares | 0) <= 0) return { ok: false, why: p.down ? 'No flares left' : 'You are not down' };
+  p.flares--; p.down = false; p.downT = 0; p.reviveT = 0;
+  p.hp = Math.round(p.maxHp * .45);
+  for (const a of room.animals) {
+    if (!a.pred || a.state === 'dead') continue;
+    const d = Math.hypot(a.x - p.x, a.z - p.z);
+    if (d < 32) { a.retreatT = 4 + Math.random() * 1.5; a.heading = Math.atan2(a.x - p.x, a.z - p.z); a.cool = Math.max(a.cool || 0, 3); }
+  }
+  broadcast(room, { t: 'flare', id: p.id, name: p.name, x: +p.x.toFixed(1), z: +p.z.toFixed(1) });
+  console.log(`[defense] ${p.name} fired a flare`);
+  return { ok: true, hp: p.hp, flares: p.flares };
 }
 function stepDefenseBot(room, b, dt) {
+  // A teammate on the ground comes first: the nearest standing bot walks over
+  // and stays beside them until they are up.
+  const downed = [...room.players.values()].filter(q => q.down && !q.bot && !q.gone);
+  if (downed.length) {
+    const standing = [...room.players.values()].filter(q => q.bot && !q.down);
+    for (const v of downed) {
+      const helper = standing.sort((x, y) => Math.hypot(x.x - v.x, x.z - v.z) - Math.hypot(y.x - v.x, y.z - v.z))[0];
+      if (helper === b) {
+        const d = Math.hypot(v.x - b.x, v.z - b.z);
+        b.yaw = Math.atan2(v.x - b.x, v.z - b.z);
+        if (d > 2.5) { const sp = Math.min(6.5, d); b.x += Math.sin(b.yaw) * sp * dt; b.z += Math.cos(b.yaw) * sp * dt; }
+        b.firing = 0; b.reviving = v.id;
+        return;
+      }
+    }
+  }
+  b.reviving = null;
   let best = null, bd = 1e9;
   for (const a of room.animals) { if (!a.pred || a.state === 'dead') continue; const d = Math.hypot(a.x - b.x, a.z - b.z); if (d < bd) { bd = d; best = a; } }
   b.firing = 0;
@@ -1242,7 +1334,7 @@ function defShot(room, p, m) {
   if (p.down) return { ok: false, why: 'You are down' };
   const rateMul = 1 - .15 * (p.up.rate | 0);
   const weapon = m.weapon === 'bow' ? 'bow' : 'rifle';
-  if (room.time - p.lastShot < (weapon === 'bow' ? .75 : 0.5) * rateMul) return { ok: false, why: 'too fast' };
+  if (tooFast(p, (weapon === 'bow' ? .75 : 0.5) * rateMul)) return { ok: false, why: 'too fast' };
   const base = resolveShotGeneric(room, p, m);          // same aim maths as the arena
   if (!base.ok || !base.hit) return base;
   const a = base.hit.a;
@@ -1254,12 +1346,15 @@ function defShot(room, p, m) {
   }
   const zone = base.hit.zone;
   const dmgMul = 1 + .25 * (p.up.damage | 0);
-  const dmg = (zone === 'vital' ? 2.6 : zone === 'head' ? (weapon === 'rifle' ? 2.6 : 1.2) : zone === 'body' ? (m.magnum ? 1.5 : 1.0) : .45) * dmgMul;
+  const dmg = predDamage(zone, base.hit.dist, m, dmgMul * (weapon === 'bow' ? .8 : 1));
+  if (!dmg) return { ok: true, hit: { id: a.id, zone, dist: base.hit.dist, killed: false, nodmg: true,
+    note: 'Past 50 m only a head or vital shot stops a ' + a.sp } };
   a.hp -= dmg;
-  if (a.hp > 0) return { ok: true, hit: { id: a.id, zone, dist: base.hit.dist, killed: false, hpFrac: a.hp / a.hpMax } };
+  const took = +(dmg / a.hpMax).toFixed(2);
+  if (a.hp > 0) return { ok: true, hit: { id: a.id, zone, dist: base.hit.dist, killed: false, hpFrac: a.hp / a.hpMax, took } };
   a.state = 'dead'; a.deadT = 0; a.speed = 0; a.by = p.id;
   predKilled(room, p, a, zone, base.hit.dist);
-  return { ok: true, hit: { id: a.id, zone, dist: base.hit.dist, killed: true, species: a.sp, pts: 0 } };
+  return { ok: true, hit: { id: a.id, zone, dist: base.hit.dist, killed: true, species: a.sp, pts: 0, took } };
 }
 function defBuy(room, p, item) {
   const it = SHOP[item]; if (!it) return { ok: false, why: 'No such item' };
@@ -1473,8 +1568,17 @@ setInterval(() => {
     ws.isAlive = false; try { ws.ping(); } catch (e) {}
   }
 }, 25000);
+// How long this connection takes to answer. A player on a slow line is aiming
+// at a picture of the world that is already old, so the hit test has to look
+// that far back for them — see resolveShot. Measured, not taken on trust.
+setInterval(() => {
+  for (const ws of wss.clients) { try { ws.ping(String(Date.now())); } catch (e) {} }
+}, 4000);
 wss.on('connection', (ws, req) => {
-  ws.isAlive = true; ws.on('pong', () => { ws.isAlive = true; });
+  ws.isAlive = true; ws.rtt = 60;
+  ws.on('pong', d => { ws.isAlive = true;
+    const sent = +String(d || ''); if (sent > 0) { const r = Date.now() - sent;
+      if (r >= 0 && r < 2000) ws.rtt = ws.rtt * .6 + r * .4; } });
   const ip = ipOf(req);
   // Whole offices, schools and mobile networks share one address, so the limit
   // has to allow a crowd arriving together — and when it does bite, say so
@@ -1576,6 +1680,7 @@ wss.on('connection', (ws, req) => {
       return;
     }
     if (m.t === 'buy' && isDefense(room)) { send(ws, { t: 'bought', ...defBuy(room, p, String(m.item || '')) }); return; }
+    if (m.t === 'flare' && isDefense(room)) { send(ws, { t: 'flared', ...defFlare(room, p) }); return; }
     if (m.t === 'shot' && p.out) { send(ws, { t: 'shotResult', ok: false, why: 'You are out — watching until the match ends' }); return; }
     if (m.t === 'shot' && p.hp <= 0 && !isDefense(room)) { send(ws, { t: 'shotResult', ok: false, why: 'Down — back on your feet in a moment' }); return; }
     if (m.t === 'shot' && room.phase === 'warm') { send(ws, { t: 'shotResult', ok: false, why: 'Warm-up — the match has not started' }); return; }
@@ -1669,6 +1774,13 @@ setInterval(() => {
     // at ten updates a second, rounded to 10 cm, with the flags left out when
     // they are false. Same game, a fifth of the traffic.
     room.animTick = (room.animTick | 0) + 1;
+    const nowMs = Date.now();
+    for (const a of room.animals) {
+      if (a.state === 'dead') { a.hist = null; continue; }
+      const h = a.hist || (a.hist = []);
+      h.push({ t: nowMs, x: a.x, z: a.z });
+      while (h.length && nowMs - h[0].t > 1100) h.shift();
+    }
     const withAnimals = room.animTick % 3 !== 0;
     const head = {
       t: 'states',
@@ -1680,7 +1792,9 @@ setInterval(() => {
         if (q.tags) o.tags = q.tags | 0;
         if (q.firing) o.firing = 1;
         if (q.bot) o.bot = 1;
-        if (q.down) o.down = 1;
+        if (q.down) { o.down = 1; o.rv = +Math.min(1, (q.reviveT || 0) / 3).toFixed(2); }
+        if (q.flares != null && isDefense(room)) o.fl = q.flares | 0;
+        if (q.reviving) o.rvg = q.reviving;
         if (q.pts) o.pts = q.pts | 0;
         if (q.out) o.out = 1;
         o.lives = q.lives == null ? 3 : q.lives;
