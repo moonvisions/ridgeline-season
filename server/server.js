@@ -46,7 +46,7 @@ const ORIGIN = process.env.ORIGIN || process.env.Origin || '*';   // set to your
 // two different sites. Allow both forms of whatever was configured, and answer
 // each request with its own origin so the browser accepts it.
 const ALLOWED = ORIGIN === '*' ? null : new Set(ORIGIN.split(',').map(o => o.trim().replace(/\/+$/, '')).filter(Boolean).flatMap(o => {
-  try { const u = new URL(o); const bare = u.hostname.replace(/^www\./, '');
+  try { const u = new URL(o); const bare = u.host.replace(/^www\./, '');   // host keeps a :port if there is one
         return [u.protocol + '//' + bare, u.protocol + '//www.' + bare]; } catch (e) { return [o]; } }));
 function corsFor(req) {
   const o = req && req.headers && req.headers.origin;
@@ -56,7 +56,7 @@ function corsFor(req) {
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v13';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v18';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -958,6 +958,9 @@ function resolveShot(room, p, m, opts) {
     return { ok: false, why: 'catching up — try that again' };
   }
   const yaw = +m.yaw, pitch = Math.max(-.7, Math.min(.7, +m.pitch || 0));
+  // Where the eye was when the shot left: crouched is about a metre, standing 1.6.
+  // Taken from the client but held to what a body can do, so it cannot be abused.
+  const eye = Number.isFinite(+m.eye) ? Math.max(.8, Math.min(1.75, +m.eye)) : 1.6;
   if (!Number.isFinite(yaw)) return { ok: false, why: 'bad aim' };
   spook(room, p.x, p.z, weapon === 'bow' ? 14 : 150);
   let best = null, near = null;
@@ -984,7 +987,7 @@ function resolveShot(room, p, m, opts) {
       const halfWide = Math.atan2(s.rx * s.k * 1.6, Math.max(1, dist));   // how wide it looks from here
       if (Math.abs(dyaw) > Math.max(.35, halfWide)) continue;
       const lateral = Math.abs(dist * Math.tan(dyaw));
-      let h = 1.6 + dist * Math.tan(pitch);
+      let h = eye + dist * Math.tan(pitch);
       if (weapon === 'bow') { const v = m.bowSpeed ? Math.min(80, +m.bowSpeed) : 58; const tf = dist / v; h -= 4.9 * tf * tf; }
       const cy = s.bodyY * s.k, vert = Math.abs(h - cy), w = s.rx * s.k, t = s.ry * s.k;
       const top = cy + t + .55 * s.k;                   // top of the head / hump
@@ -1146,15 +1149,16 @@ function shopFor(room) {
   for (const [k, it] of Object.entries(SHOP)) out[k] = { name: it.name, cost: it.cost(room.wave), max: it.max, desc: it.desc };
   return out;
 }
-function defStartRun(room) {
+function defStartRun(room, secs) {
+  secs = secs || DEF_WARMUP;
   balanceBots(room);
-  room.phase = 'warm'; room.warmLeft = DEF_WARMUP; room.wave = 0; room.running = false; room.time = 0;
+  room.phase = 'warm'; room.warmLeft = secs; room.wave = 0; room.running = false; room.time = 0;
   room.animals = [];
   for (let i = 0; i < 8; i++) room.animals.push(spawnAnimal(room));
   balanceBots(room);
   for (const p of room.players.values()) defPlayerInit(p);
   gatherBots(room);
-  broadcast(room, { t: 'warmup', seconds: DEF_WARMUP, players: room.players.size, defense: true,
+  broadcast(room, { t: 'warmup', seconds: secs, players: room.players.size, defense: true,
     team: [...room.players.values()].map(q => ({ id: q.id, name: q.name, bot: !!q.bot, color: q.color })) });
 }
 function defEnd(room) {
@@ -1172,6 +1176,7 @@ function defEnd(room) {
   persist();
   broadcast(room, { t: 'over', wave: room.wave, board });
   console.log(`[defense] ${room.name} over at wave ${room.wave}`);
+  if (room.party) { partyBack(room); return; }   // a party goes back to its waiting room, not straight into another run
   setTimeout(() => { if (rooms.has(room.name) && realCount(room) > 0 && room.phase === 'over') defStartRun(room); }, 15000);
 }
 function stepPredator(room, a, dt) {
@@ -1498,6 +1503,15 @@ function balanceBots(room) {
     while (dropBot(room));
     return;
   }
+  if (room.party) {                       // a party only gets bots if the host asked, and only once it has started
+    const pa = room.party;
+    if (!pa.started || !pa.bots) { while (dropBot(room)); return; }
+    const wantP = Math.max(0, pa.size - real);
+    let botsP = room.players.size - real;
+    while (botsP < wantP) { addBot(room); botsP++; }
+    while (botsP > wantP) { if (!dropBot(room)) break; botsP--; }
+    return;
+  }
   const want = Math.max(0, (room.mode === 'defense' ? 4 : MIN_PARTICIPANTS) - real);
   let bots = room.players.size - real;
   while (bots < want) { addBot(room); bots++; }
@@ -1566,14 +1580,15 @@ const WARMUP_SECONDS = 12;   // same wait as Ridge Defense, so both modes feel a
 // A match should not begin the instant you arrive. Everyone gets a warm-up:
 // you are in the world, you can move and look around and watch the others
 // turn up, and a shared countdown starts the round for all of you at once.
-function startWarmup(room) {
+function startWarmup(room, secs) {
+  secs = secs || WARMUP_SECONDS;
   room.phase = 'warm';
-  room.warmLeft = WARMUP_SECONDS;
+  room.warmLeft = secs;
   room.running = false;
   room.animals = [];
   for (let i = 0; i < 18; i++) room.animals.push(spawnAnimal(room));
   for (const p of room.players.values()) { p.score = 0; p.kills = 0; p.tags = 0; p.trophies = 0; p.longest = 0; }
-  broadcast(room, { t: 'warmup', seconds: WARMUP_SECONDS, players: room.players.size });
+  broadcast(room, { t: 'warmup', seconds: secs, players: room.players.size });
   console.log(`[match] ${room.name} warm-up (${room.players.size} in the lobby)`);
 }
 const ARENA_LIVES = 3;
@@ -1643,7 +1658,57 @@ function endMatch(room) {
   persist();
   broadcast(room, { t: 'end', board });
   console.log(`[match] ${room.name} ended: ${board.map(b => b.name + ' ' + b.score).join(', ')}`);
+  if (room.party) { partyBack(room); return; }
   setTimeout(() => { if (rooms.has(room.name) && realCount(room) > 0 && !room.running) startWarmup(room); }, 12000);
+}
+
+// ---------------------------------------------------------------- parties
+// A private room made for friends. The host picks how many are playing; the
+// server hands out a short code that goes into a link. Everyone who opens it
+// waits together until the host starts, or until every place is filled and
+// everyone has pressed Ready. After a match the party goes back to waiting,
+// together, instead of being thrown into the next round.
+const PARTY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no 0/O or 1/I to misread
+const PARTY_WARMUP = 6;
+function newPartyCode() {
+  for (;;) {
+    let c = ''; for (let i = 0; i < 6; i++) c += PARTY_CHARS[crypto.randomInt(PARTY_CHARS.length)];
+    if (!rooms.has('P_' + c) && !rooms.has('D_P_' + c)) return c;
+  }
+}
+function partyCap(room) { return isDefense(room) ? DEF_MAX : MAX_PER_ROOM; }
+function partyPeople(room) { return [...room.players.values()].filter(q => !q.bot); }
+function partyState(room) {
+  const pa = room.party;
+  return { t: 'party', code: pa.code, mode: room.mode || 'arena', size: pa.size, bots: pa.bots, max: partyCap(room),
+    hostId: pa.hostId, started: pa.started,
+    players: partyPeople(room).map(q => ({ id: q.id, name: q.name, color: q.color, ready: !!q.pready, host: q.id === pa.hostId, away: !!q.gone })) };
+}
+function partyBroadcast(room) {
+  const pa = room.party; if (!pa) return;
+  const here = partyPeople(room).filter(q => !q.gone);
+  if (!here.find(q => q.id === pa.hostId) && here.length) pa.hostId = here[0].id;   // the host left: next in line takes over
+  broadcast(room, partyState(room));
+  if (!pa.started && here.length >= pa.size && here.every(q => q.pready)) startParty(room);
+}
+function startParty(room) {
+  const pa = room.party; if (!pa || pa.started) return;
+  pa.started = true;
+  for (const q of room.players.values()) q.pready = false;
+  broadcast(room, partyState(room));
+  console.log(`[party] ${pa.code} started with ${realCount(room)} of ${pa.size}${pa.bots ? ' (bots fill the rest)' : ''}`);
+  if (isDefense(room)) defStartRun(room, PARTY_WARMUP);
+  else { balanceBots(room); startWarmup(room, PARTY_WARMUP); }
+}
+function partyBack(room) {
+  const pa = room.party; if (!pa) return;
+  pa.started = false; room.phase = 'party'; room.running = false; room.animals = [];
+  for (const q of room.players.values()) q.pready = false;
+  balanceBots(room);
+  partyBroadcast(room);
+}
+function partyEmptied(room) {   // nobody left: the next person in finds a fresh waiting room
+  if (room.party && realCount(room) === 0) { room.party.started = false; room.phase = 'party'; room.running = false; }
 }
 
 const wss = new WebSocketServer({ server, maxPayload: 4096 });
@@ -1682,12 +1747,26 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'join') {
       if (p) return;
       const user = userFromToken(m.token);
-      const defense = m.mode === 'defense';
-      const roomName = (defense ? 'D_' : '') + (String(m.room || 'RIDGE').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'RIDGE');
-      room = getRoom(roomName);
-      if (defense && !room.mode) { room.mode = 'defense'; room.wave = 0; }
+      let defense = m.mode === 'defense';
+      const pj = (m.party && typeof m.party === 'object') ? m.party : null;
+      if (pj && pj.create) {
+        const code = newPartyCode();
+        room = getRoom((defense ? 'D_' : '') + 'P_' + code);
+        if (defense) { room.mode = 'defense'; room.wave = 0; }
+        room.party = { code, size: Math.max(2, Math.min(partyCap(room), pj.size | 0 || 4)), bots: !!pj.bots, hostId: null, started: false };
+        room.phase = 'party';
+        console.log(`[party] ${code} made for ${room.party.size} (${defense ? 'squad' : 'arena'})`);
+      } else if (pj && pj.code) {
+        const code = String(pj.code).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+        const name = rooms.has('P_' + code) ? 'P_' + code : rooms.has('D_P_' + code) ? 'D_P_' + code : null;
+        if (!name || !rooms.get(name).party) { send(ws, { t: 'error', code: 'noparty', message: 'That party has ended, or the code is wrong' }); return setTimeout(() => { try { ws.close(); } catch (e) {} }, 100); }
+        room = getRoom(name); defense = isDefense(room);
+      } else {
+        const roomName = (defense ? 'D_' : '') + (String(m.room || 'RIDGE').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'RIDGE');
+        room = getRoom(roomName);
+        if (defense && !room.mode) { room.mode = 'defense'; room.wave = 0; }
+      }
       const cap = defense ? DEF_MAX : MAX_PER_ROOM;
-      if (room.players.size >= cap) { send(ws, { t: 'error', message: 'Room is full' }); return ws.close(); }
       const name = user ? user.name : ('Guest' + (String(m.name || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 10) || nextPid));
       // Coming back from a dropped connection: same person, same match, same score.
       // Identity has to be proved, not claimed. A signed-in player is already
@@ -1704,9 +1783,16 @@ wss.on('connection', (ws, req) => {
           mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
           players: [...room.players.values()].filter(q => !q.gone).map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
         broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
+        if (room.party) partyBroadcast(room);
         console.log(`[net] ${p.name} came back to ${room.name} with ${p.score} points`);
         return;
       }
+      if (room.party && partyPeople(room).length >= room.party.size) {
+        send(ws, { t: 'error', code: 'full', message: 'This party is full (' + room.party.size + ' of ' + room.party.size + ')' });
+        return setTimeout(() => { try { ws.close(); } catch (e) {} }, 100);
+      }
+      if (room.players.size >= cap && !(room.party && dropBot(room))) {
+        send(ws, { t: 'error', message: 'Room is full' }); return setTimeout(() => { try { ws.close(); } catch (e) {} }, 100); }
       p = { id: 'p' + (nextPid++), name, user, resumeKey: crypto.randomBytes(9).toString('hex'), color: COLORS[room.players.size % COLORS.length], ws,
             x: 0, z: 0, yaw: 0, score: 0, kills: 0, tags: 0, trophies: 0, longest: 0, firing: 0, lastShot: -9, lastState: Date.now() };
       // Without this, anyone who joined a match already in progress arrived with
@@ -1717,8 +1803,13 @@ wss.on('connection', (ws, req) => {
       if (defense) defPlayerInit(p); else arenaPlayerInit(p);
       room.players.set(p.id, p);
       send(ws, { t: 'welcome', id: p.id, seed: room.seed, authoritative: true, build: BUILD, resume: p.resumeKey, mode: room.mode || 'arena', seconds: room.running ? room.timeLeft : MATCH_SECONDS, guest: !user,
-                 players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })) });
+                 players: [...room.players.values()].map(q => ({ id: q.id, name: q.name, color: q.color, bot: !!q.bot })),
+                 party: room.party ? partyState(room) : undefined });
       broadcast(room, { t: 'joined', player: { id: p.id, name: p.name, color: p.color } }, p.id);
+      if (room.party) {
+        partyBroadcast(room);
+        if (!room.party.started) { console.log(`[party] ${p.name} is waiting in ${room.party.code}`); return; }
+      }
       if (isDefense(room)) {
         if (!room.phase || room.phase === 'over') defStartRun(room);
         else if (room.phase === 'warm') send(ws, { t: 'warmup', seconds: Math.ceil(room.warmLeft), players: room.players.size, defense: true,
@@ -1804,9 +1895,22 @@ wss.on('connection', (ws, req) => {
       broadcast(room, { t: 'feed', name: p.name, text: 'tagged a ' + a.sp }, p.id);
       return;
     }
+    if (room.party && (m.t === 'pready' || m.t === 'pstart' || m.t === 'pset')) {
+      const pa = room.party, host = p.id === pa.hostId;
+      if (pa.started) return;
+      if (m.t === 'pready') { p.pready = !!m.on; partyBroadcast(room); return; }
+      if (m.t === 'pstart') { if (host) startParty(room); return; }
+      if (host) {
+        if (m.size != null) pa.size = Math.max(2, partyPeople(room).length, Math.min(partyCap(room), m.size | 0));
+        if (m.bots != null) pa.bots = !!m.bots;
+        partyBroadcast(room);
+      }
+      return;
+    }
     if (m.t === 'leave') {          // quitting on purpose is not a dropped connection
       if (p && room) { p.gone = 0; room.players.delete(p.id); broadcast(room, { t: 'left', id: p.id });
         if (realCount(room) === 0) { room.emptiedAt = Date.now(); room.running = false; }
+        partyEmptied(room); if (room.party) partyBroadcast(room);
         console.log(`[net] ${p.name} left ${room.name}`); p = null; }
       try { ws.close(); } catch (e) {}
       return;
@@ -1822,12 +1926,14 @@ wss.on('connection', (ws, req) => {
     if (room.running && !room.dead) {
       p.gone = Date.now(); p.ws = null;
       broadcast(room, { t: 'left', id: p.id });
+      if (room.party) partyBroadcast(room);
       console.log(`[net] ${p.name} dropped — holding their place for ${RESUME_SECONDS}s`);
       return;
     }
     room.players.delete(p.id);
     broadcast(room, { t: 'left', id: p.id });
     if (realCount(room) === 0) { room.emptiedAt = Date.now(); room.running = false; room.seed = (Math.random() * 0xffffffff) >>> 0; }
+    partyEmptied(room); if (room.party) partyBroadcast(room);
   });
   ws.on('error', () => {});
 });
@@ -1866,6 +1972,7 @@ setInterval(() => {
     // gets what they could actually shoot (the server ignores hits past 230 m),
     // at ten updates a second, rounded to 10 cm, with the flags left out when
     // they are false. Same game, a fifth of the traffic.
+    if (room.phase === 'party') continue;   // a waiting room has no world to send
     room.animTick = (room.animTick | 0) + 1;
     const nowMs = Date.now();
     for (const a of room.animals) {
@@ -1938,6 +2045,7 @@ setInterval(() => {
       r.players.delete(q.id); broadcast(r, { t: 'left', id: q.id });
       console.log(`[net] ${q.name} did not come back — place released`);
       if (realCount(r) === 0) { r.emptiedAt = now; r.running = false; }
+      partyEmptied(r); if (r.party) partyBroadcast(r);
     }
   for (const [name, r] of rooms) if (realCount(r) === 0 && r.emptiedAt && now - r.emptiedAt > 300e3) { rooms.delete(name); console.log(`[room] ${name} removed`); }
   for (const [tok, t] of Object.entries(DB.tokens)) if (now - t.at > 30 * 86400e3) delete DB.tokens[tok];
