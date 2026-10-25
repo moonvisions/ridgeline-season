@@ -946,9 +946,11 @@
       </div>
       <div class="netrow">
         <label>Hunter name <input id="eUser" maxlength="14" autocomplete="username" placeholder="yourname"></label>
-        <label>Password <input id="ePass" type="password" minlength="8" autocomplete="current-password" placeholder="8+ characters"></label>
+        <label id="eCodeRow" style="display:none">Recovery code <input id="eCode" maxlength="20" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX"></label>
+        <label><span id="ePassLabel">Password</span> <input id="ePass" type="password" minlength="8" autocomplete="current-password" placeholder="8+ characters"></label>
       </div>
       <button id="eGo" class="tPlay eGo">Sign in</button>
+      <button id="eForgot" type="button" style="background:none;border:0;color:var(--faint,#9aa59d);font:inherit;font-size:13px;text-decoration:underline;margin:8px auto 0;display:block;cursor:pointer">Forgot your password?</button>
       <p class="eNote" id="eStatus">An account saves your progress, stats and leaderboard place on every device.</p>
     </div>
 
@@ -1144,21 +1146,22 @@
     <h4>Sound</h4>
     <label class="lbRow">Volume <span id="volLabel">85%</span></label>
     <input id="volSlider" type="range" min="0" max="100" step="5" class="lbRange">
+    <div class="lbBtns" id="hapticRow" style="display:none"><button id="optHaptic" class="lbBtn">Vibration: on</button></div>
 
     <div id="adFreeSection"><h4>Ad-free</h4>
       <p id="premiumState" class="lbSmall">Removing ads is $4.99, once, and it stays with your account.</p>
       <div class="lbBtns"><button id="goPremium" class="lbBtn">Remove ads — $4.99</button></div></div>
 
-    <h4>Install</h4>
+    <div class="rs-web-only"><h4>Install</h4>
     <p class="lbSmall" id="installNote">Add Ridgeline to your home screen or desktop like an app.</p>
     <div class="lbBtns"><button id="installBtn" class="lbBtn" style="display:none">Install Ridgeline</button></div>
-    <p id="installHow" class="lbSmall"></p>
+    <p id="installHow" class="lbSmall"></p></div>
 
     <h4>Your data</h4>
     <div class="lbBtns lbWrap"><button id="myData" class="lbBtn">Download my data</button><button id="delAccount" class="lbBtn">Delete my account</button><button id="resetBtn" class="lbBtn">Reset progress</button></div>
     <p id="dataState" class="lbSmall"></p>
 
-    <p class="lbSmall lbFine">Build <b id="buildStamp">—</b> · server <b id="buildStamp2">—</b> · <a href="#" id="lnkPrivacy">Privacy</a> · <a href="#" id="lnkTerms">Terms</a></p>
+    <p class="lbSmall lbFine">Build <b id="buildStamp">—</b> · server <b id="buildStamp2">—</b> · <a href="#" id="lnkPrivacy">Privacy</a> · <a href="#" id="lnkTerms">Terms</a> · <a href="https://www.ridgelineseason.com/support.html" target="_blank" rel="noopener">Support</a> · <a href="https://www.ridgelineseason.com/privacy.html" target="_blank" rel="noopener">Full privacy policy</a><span id="appVer"></span></p>
   </div>
 </div>
 
@@ -1534,12 +1537,12 @@ const DEFAULT_SERVER = 'wss://www.ridgelineseason.com/api';
 //    privacy policy and the terms. A policy with no contact route is not one.
 //      e.g. const CONTACT_EMAIL = 'hello@yourdomain.com';
 const CONTACT_EMAIL = 'daniel@moonvisionmedia.com';
-const OPERATOR      = 'Moon Vision Media';
-const POLICY_DATE   = 'September 2026';
+const OPERATOR      = 'Moon Vision Media LLC';
+const POLICY_DATE   = 'October 2026';
 // Bump this whenever you upload a new index.html. It is printed in the browser
 // console and shown in Help, so you can confirm the live site has your latest
 // file instead of a cached or half-uploaded one.
-const BUILD = 'arena-v18';   // bump this whenever you change the policy
+const BUILD = 'arena-v22';   // bump this whenever you change the policy
 // ========================== END OF SETTINGS =================================
 
 // Guests play a full game but nothing is written down — no local save, no
@@ -1636,6 +1639,18 @@ const MATS={
 function invAdd(k,n){ if(n<=0)return; save.inv[k]=(save.inv[k]||0)+n; }
 function invCount(k){ return save.inv[k]|0; }
 function invTake(k,n){ if(invCount(k)<n)return false; save.inv[k]-=n; if(save.inv[k]<=0)delete save.inv[k]; return true; }
+function harvestLocal(a){
+  if(!a||!SP[a.sp])return;
+  const y=harvestYield(a); let parts=[];
+  for(const k in y){ invAdd(k,y[k]); parts.push((y[k]>1?y[k]+' ':'')+MATS[k].name.toLowerCase()); }
+  persist();
+  addSkill('track',40); contractProgress('harvest',null,1);
+  if(mode==='chal'&&CHAL&&CHAL.id==='tagged')chalScore++;
+  callout={text:'Harvested — '+SP[a.sp].name,sub:parts.join(', ')+'  ·  sell them in Gear',c:'#7cff5a',t:3};
+  pushFeed('Harvested '+SP[a.sp].name.toLowerCase(),parts.join(', '),'#7cff5a');
+  tone(520,.2,.2,'triangle'); tone(780,.25,.2,'triangle',.1);
+  if(window.RSNative)RSNative.haptic('reward');
+}
 function harvestYield(a){
   const sp=SP[a.sp], size=sp.k, out={};
   const zone=a.lastZone||'body';
@@ -2041,6 +2056,7 @@ class WebSocketAdapter{
           if(m.party){ this.party={code:m.party.code}; this.mode=m.party.mode||this.mode; }   // a reconnect rejoins the same party, never makes a new one
           if(onWelcome)onWelcome({seed:m.seed>>>0,you:m.id,auth:this.auth,guest:this.guest,build:this.build,resumed:!!m.resumed,party:m.party||null,mode:m.mode}); }
         else if(m.t==='warmup'){ if(this.onEvent)this.onEvent({t:'warmup',seconds:m.seconds,players:m.players,defense:!!m.defense,team:m.team}); }
+        else if(m.t==='search'){ SEARCH={live:m.live|0,bots:m.bots|0,online:m.online|0}; if(m.seconds&&warmup>0)warmup=m.seconds; }
         else if(['wave','break','hp','down','revived','secondwind','over','bought','respawn','mauledDown','eliminated','final','flare','flared','lastchance','ready','readyall'].includes(m.t)){ if(this.onEvent)this.onEvent(m); }
         else if(m.t==='start'){ if(this.onEvent)this.onEvent({t:'start',seconds:m.seconds,players:m.players}); }
         else if(m.t==='end'){ if(this.onEvent)this.onEvent({t:'end',board:m.board}); }
@@ -2062,7 +2078,7 @@ class WebSocketAdapter{
             if(meA){ ARENA.lives=meA.lives==null?3:meA.lives; ARENA.out=!!meA.out; ARENA.dead=(meA.hp<=0)&&!meA.out; if(!ARENA.dead&&!ARENA.out&&meA.hp)health=meA.hp; } }
           if(m.phase==='warm'){ warmup=Math.max(0,m.seconds||0); } else { warmup=0; if(typeof m.seconds==='number'&&m.mode!=='defense')timeLeft=m.seconds; } }
         else if(m.t==='kill'&&m.id!==this.id&&this.onEvent)this.onEvent({t:'kill',name:m.name,species:m.species,points:m.points});
-        else if(m.t==='tagged'&&this.onEvent)this.onEvent({t:'tagged',tags:m.tags,score:m.score});
+        else if(m.t==='tagged'&&this.onEvent)this.onEvent({...m});
         else if(m.t==='feed'&&this.onEvent)this.onEvent({t:'feed',name:m.name,text:m.text});
   }
   start(){ return new Promise((res,rej)=>{
@@ -2228,17 +2244,23 @@ async function acctLogout(){ try{ await api('/api/logout',{}); }catch(e){} save.
 // obvious it worked and the next person can sign in as themselves.
 async function logoutToEntry(){ if(NETA){NETA.stop();NETA=null;} running=false; await acctLogout(); showEntryForced(); }
 async function acctSync(){ try{ const {token,...rest}=save; await api('/api/cloud',{save:rest}); setTxt('acctStatus','Progress backed up.'); }catch(e){ setTxt('acctStatus',e.message); } }
-let PRESENCE_N=0, liveTimer=null, SERVER_OK=null, SERVER_BUILD='', SERVER_STORE='';
+let PRESENCE_N=0, LIVE={online:0,inMatch:0,arena:0,squad:0,parties:0,searching:0}, liveTimer=null, SERVER_OK=null, SERVER_BUILD='', SERVER_STORE='';
+// A random id for this open tab, so the server can count who has the game open
+// right now. It is not stored anywhere and says nothing about who you are.
+const PRES_SID=(Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2)).replace(/[^a-z0-9]/g,'').slice(0,16).padEnd(10,'x');
+function presWhere(){ return running?(mode==='arena'?(DEF.on?'squad':'arena'):'hunt'):'lobby'; }
 async function pollPresence(){
   const base=httpBase();
   const el=$('liveCount'), t=$('titleLive');
   if(!base){ if(el)setTxt('liveCount','Offline — no server address set'); if(t)t.style.display='none';
     setTxt('svrState','No server address set — online play is off'); return; }
   try{
-    const j=await fetch(base+'/api/status').then(r=>r.json());
-    const n=j.players|0, a=j.accounts|0;
-    if(el)setTxt('liveCount', n>0?(n+' online'):'');
-    if(PRESENCE_N!==n){ PRESENCE_N=n; if(typeof lobbyModesRefresh==='function')lobbyModesRefresh(); }
+    const j=await fetch(base+'/api/status?sid='+PRES_SID+'&where='+presWhere()).then(r=>r.json());
+    if(j.live)LIVE=j.live;
+    const n=j.live?(j.live.online|0):(j.players|0), a=j.accounts|0;
+    if(el)setTxt('liveCount', n>0?(n+' online'+(LIVE.inMatch?' · '+LIVE.inMatch+' in matches':'')):'');
+    const key=n+'/'+LIVE.arena+'/'+LIVE.squad;
+    if(PRESENCE_N!==n||pollPresence.k!==key){ PRESENCE_N=n; pollPresence.k=key; if(typeof lobbyModesRefresh==='function')lobbyModesRefresh(); }
     if(t){ t.style.display=n>0?'':'none'; setTxt('titleLive', n+(n===1?' hunter online':' hunters online')); }
     SERVER_OK=true; SERVER_BUILD=j.build||''; SERVER_STORE=j.storage||'';
     // Say it out loud when the page and the server are different versions —
@@ -2247,7 +2269,7 @@ async function pollPresence(){
     const mismatch=j.build&&j.build!==BUILD, noAcc=j.storage==='database-unreachable';
     setTxt('svrState',mismatch?('⚠ The game server is running '+j.build+' but this page is '+BUILD+' — the server needs updating, so new features will not work online')
       :noAcc?('⚠ Server online, but accounts are paused — '+(j.problem||'the database cannot be reached')+' You can still play as a guest.')
-      :'Server online'+(j.build?' · build '+j.build:'')+(n>0?' · '+n+' playing':''));
+      :'Server online'+(j.build?' · build '+j.build:'')+(n>0?' · '+n+' online':''));
     const sv=$('svrDot'); if(sv)sv.style.background=mismatch||noAcc?'#ffb03b':'#7cff5a';
   }catch(e){
     SERVER_OK=false;
@@ -2868,10 +2890,10 @@ function updateAnimal(a,dt){
   const mv=a.speed*(a.stagT>0?.3:1);                // a hit animal stumbles for a moment before it goes
   a.x+=Math.sin(a.heading)*mv*dt; a.z+=Math.cos(a.heading)*mv*dt;
 }
-function startCharge(a){ if(a.state==='charge')return; a.state='charge'; a.alert=1.2; if(a.sp==='bear'){ sfxRoar(); warn={text:'BEAR CHARGING — SHOOT IT!',t:3}; } else { tone(160,.35,.35,'sawtooth'); if(!warn)warn={text:'BOAR CHARGING',t:2}; } }
+function startCharge(a){ if(a.state==='charge')return; a.state='charge'; a.alert=1.2; if(window.RSNative)RSNative.haptic('danger'); if(a.sp==='bear'){ sfxRoar(); warn={text:'BEAR CHARGING — SHOOT IT!',t:3}; } else { tone(160,.35,.35,'sawtooth'); if(!warn)warn={text:'BOAR CHARGING',t:2}; } }
 function animalReaches(a){ const sp=SP[a.sp];
   if(mode==='hunt'&&a.sp==='bear'){ playerDeath(a); return; }
-  health-=sp.dmg; if(stats)stats.dmgTaken=(stats.dmgTaken||0)+sp.dmg; lastHurt=0; hurtFlash=1; sfxThud(); tone(90,.4,.5,'sawtooth');
+  health-=sp.dmg; if(window.RSNative)RSNative.haptic('hurt'); if(stats)stats.dmgTaken=(stats.dmgTaken||0)+sp.dmg; lastHurt=0; hurtFlash=1; sfxThud(); tone(90,.4,.5,'sawtooth');
   particles.push(...Array.from({length:14},()=>({x:cx+rnd(-60,60),y:H/2+rnd(-60,60),vx:rnd(-80,80),vy:rnd(-120,40),life:rnd(.4,.9),c:'#a01010',sz:rnd(3,7)})));
   P.pitch=clamp(P.pitch+rnd(-.15,.15),-.7,.7); P.yaw+=rnd(-.2,.2);
   if(health<=0){ playerDeath(a); return; }
@@ -2883,6 +2905,7 @@ function spook(radius,amount){ for(const a of animals){ if(a.state==='dead'||a.s
 function damageFor(zone){ const rifle=weapon==='rifle'; if(zone==='vital')return 10; if(zone==='head')return rifle?10:3;
   if(zone==='body')return rifle?(upg('rifle')?2.2:1.2):(upg('bow')?1.1:.9); return rifle?.6:.4; }
 function killAnimal(a,zone,d,p){
+  if(window.RSNative)RSNative.haptic('kill');
   const sp=SP[a.sp]; a.state='dead'; a.speed=0; a.alert=0; a.lastZone=zone;
   for(let i=0;i<(a.arrowsIn||0);i++)stuck.push({x:a.x+rnd(-.6,.6),z:a.z+rnd(-.6,.6),t:0,ang:rnd(0,TAU),tilt:rnd(.5,1.1),seed:Math.random()});
   a.arrowsIn=0;
@@ -3026,17 +3049,17 @@ function fire(){
     lastNetShot=nowMs();
     const aim=aimAngles(aimSpread());          // where you are aiming NOW, before the kick moves the barrel
     lastShotAt=nowMs();
-    if(weapon==='rifle'){ if(ammo<=0){ sfxClick(0,1400); return; } ammo--; sfxShot(); flash=.08; recoil=1;
+    if(weapon==='rifle'){ if(ammo<=0){ sfxClick(0,1400); return; } ammo--; sfxShot(); if(window.RSNative)RSNative.haptic('shot'); flash=.08; recoil=1;
       for(let i=0;i<12;i++)particles.push({x:cx+W*.07,y:H*.53,vx:rnd(-40,40)-60,vy:rnd(-90,-20),life:rnd(.6,1.4),c:'#c9c4b6',sz:rnd(6,16),smoke:true});
       kick(upg('rifle')?.06:.05); boltT=boltDur=Math.min(.6,cd*.95); sfxBolt(); }
-    else { if(arrowsLeft<=0){ sfxClick(0,900); return; } arrowsLeft--; sfxBow(); recoil=.4; kick(.012); nockT=.55; if(arrowsLeft>0)sfxNock(); }
+    else { if(arrowsLeft<=0){ sfxClick(0,900); return; } arrowsLeft--; sfxBow(); if(window.RSNative)RSNative.haptic('miss'); recoil=.4; kick(.012); nockT=.55; if(arrowsLeft>0)sfxNock(); }
     stats.shots++;
     NETA.emit({t:'shot',weapon,x:+P.x.toFixed(2),z:+P.z.toFixed(2),yaw:+aim.yaw.toFixed(4),pitch:+aim.pitch.toFixed(4),eye:+P.eye.toFixed(2),magnum:!!upg('rifle'),bowSpeed:upg('bow')?78:58});
     return; }
   if(weapon==='rifle'){
     if(ammo<=0){ sfxClick(0,1400); return; }
     if(boltT>0){ sfxClick(0,1700); return; }            // still working the bolt
-    ammo--; stats.shots++; sfxShot(); lastShotAt=nowMs(); flash=.08; recoil=1;
+    ammo--; stats.shots++; sfxShot(); if(window.RSNative)RSNative.haptic('shot'); lastShotAt=nowMs(); flash=.08; recoil=1;
     for(let i=0;i<12;i++)particles.push({x:cx+W*.07,y:H*.53,vx:rnd(-40,40)-60,vy:rnd(-90,-20),life:rnd(.6,1.4),c:'#c9c4b6',sz:rnd(6,16),smoke:true});
     const spread=aimSpread();
     const mx=cx+Math.tan(rnd(-spread,spread))*f, my=H/2+Math.tan(rnd(-spread,spread))*f;
@@ -3058,7 +3081,7 @@ function fire(){
   } else {
     if(arrowsLeft<=0){ sfxClick(0,900); callout={text:'Quiver empty',sub:'',c:'#f1ebdc',t:1.2}; return; }
     if(nockT>0)return;                                    // next arrow still going on the string
-    arrowsLeft--; stats.shots++; sfxBow(); lastShotAt=nowMs(); recoil=.4; kick(.012); nockT=.55; if(arrowsLeft>0)sfxNock();
+    arrowsLeft--; stats.shots++; sfxBow(); if(window.RSNative)RSNative.haptic('miss'); lastShotAt=nowMs(); recoil=.4; kick(.012); nockT=.55; if(arrowsLeft>0)sfxNock();
     const spd=(upg('bow')?78:58)*(1+Math.min(.25,(sLv('arch')-1)*.008)), sp=aimSpread();
     const {yaw,pitch}=aimAngles(sp);
     arrows.push({x:P.x,z:P.z,y:camAlt-.1,vx:Math.sin(yaw)*Math.cos(pitch)*spd,vz:Math.cos(yaw)*Math.cos(pitch)*spd,vy:Math.sin(pitch)*spd,t:0});
@@ -3107,7 +3130,7 @@ function updateArrows(dt){
 }
 function reload(){ if(!running||weapon!=='rifle'||reloading>0||ammo===magSize())return; reloading=1.7; sfxClick(.2,600); sfxClick(.9,500); sfxClick(1.5,700); }
 function swapWeapon(){ if(!running)return; if(mode==='hunt'&&LV&&LV.bowOnly){ callout={text:'Bow-only hunt',sub:'The rifle stayed at the lodge',c:'#e0b45a',t:1.6}; return; } weapon=weapon==='rifle'?'bow':'rifle'; sfxClick(0,400); }
-function playerDeath(an){ dying=true; deathT=0; if(an.sp==='bear')sfxRoar(); else tone(120,.6,.5,'sawtooth');
+function playerDeath(an){ dying=true; deathT=0; if(window.RSNative)RSNative.haptic('hurt'); if(an.sp==='bear')sfxRoar(); else tone(120,.6,.5,'sawtooth');
   setTimeout(()=>{ running=false; const nm=SP[an.sp].name.toLowerCase();
     if(mode==='surv'){ save.tot.bestWave=Math.max(save.tot.bestWave,Math.max(0,wave-1)); checkBadges(); persist();
       setHtml('deathTitle','Overrun<span>Wave '+wave+'</span>'); setTxt('deathText',`A ${nm} finished you on wave ${wave} with ${waveKills} kills. Cash from cleared waves is already banked. Best run: wave ${save.tot.bestWave}.`); setTxt('deathTip','Keep moving between waves, reload the moment it clears, and put bears down first — boars hit softer.'); }
@@ -3958,7 +3981,7 @@ function drawDefLobby(){
     ly+=21;
   }
   ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.5)';
-  ctx.fillText('Look around. Shots do not count yet.',cx,ly+10);
+  ctx.fillText(SEARCH&&!PARTY?((SEARCH.live>1?SEARCH.live+' live hunters':'Searching for live hunters…')+(SEARCH.online>1?' · '+SEARCH.online+' online':'')):'Look around. Shots do not count yet.',cx,ly+10);
   ctx.restore();
 }
 function drawWarmup(){
@@ -3973,9 +3996,16 @@ function drawWarmup(){
   ctx.fillText(secs,cx,y+44);
   ctx.font='14px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.85)';
   const others=rivals.length;
-  ctx.fillText(others?((others+1)+' hunters in the valley'):'Waiting for hunters…',cx,y+72);
-  ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.55)';
-  ctx.fillText('Shots do not count yet — get your bearings',cx,y+94);
+  if(SEARCH&&!PARTY){
+    const lv=SEARCH.live|0;
+    ctx.fillText(lv>1?(lv+' live hunters in this match'):'Searching for live hunters…',cx,y+72);
+    ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.55)';
+    ctx.fillText((SEARCH.online>1?SEARCH.online+' people online now · ':'')+(SEARCH.bots?'bots fill the empty spots':'no bots this round'),cx,y+94);
+  } else {
+    ctx.fillText(others?((others+1)+' hunters in the valley'):'Waiting for hunters…',cx,y+72);
+    ctx.font='12px Trebuchet MS,sans-serif'; ctx.fillStyle='rgba(241,235,220,.55)';
+    ctx.fillText('Shots do not count yet — get your bearings',cx,y+94);
+  }
   ctx.restore();
 }
 function drawMinimap(){
@@ -4090,16 +4120,10 @@ function frame(now){ syncShopButton(); syncPlaying();
     if(!arenaAuth)animals=animals.filter(a=>{ if(a.state==='gone'){ if(mode==='hunt'){ const o=OUTING; setTimeout(()=>{if(running&&o===OUTING)animals.push(makeTrophy(spawnAnimal(false)));},3000); } return false; } return true; });
     if(animals.length>18)animals=animals.filter(a=>a.state!=='dead'||a.deadT<20);
     for(const a of animals){ if(a.state==='dead'&&!a.tagged&&distP(a)<4){ a.tagged=true;
-      const y=harvestYield(a); let parts=[];
-      for(const k in y){ invAdd(k,y[k]); parts.push((y[k]>1?y[k]+' ':'')+MATS[k].name.toLowerCase()); }
-      persist();
-      if(!arenaAuth)score+=Math.round(SP[a.sp].pts*.15);   // online, the server decides and tells us
-      addSkill('track',40); contractProgress('harvest',null,1);
-      if(mode==='chal'&&CHAL&&CHAL.id==='tagged')chalScore++;
-      if(arenaAuth&&NETA&&a.id)NETA.emit({t:'tag',id:a.id});
-      callout={text:'Harvested — '+SP[a.sp].name,sub:parts.join(', ')+'  ·  sell or craft at the lodge',c:'#7cff5a',t:3};
-      pushFeed('Harvested '+SP[a.sp].name.toLowerCase(),parts.join(', '),'#7cff5a');
-      tone(520,.2,.2,'triangle'); tone(780,.25,.2,'triangle',.1); } }
+      // Online the server owns the carcass: ask, and harvest only when it says yes.
+      if(arenaAuth&&NETA&&a.id){ NETA.emit({t:'tag',id:a.id}); continue; }
+      score+=Math.round(SP[a.sp].pts*.15);
+      harvestLocal(a); } }
     detection=0; for(const a of animals){ if(a.state!=='dead'&&a.state!=='gone'&&distP(a)<130)detection=Math.max(detection,a.alert); }
     if(mode==='hunt'&&LV){ const ls=liveStats(); for(let i=0;i<3;i++){ if(!goalDone[i]&&!LV.goals[i].keep&&LV.goals[i].f(ls)){ goalDone[i]=true;
       // A bonus goal met before the main one is not a star yet — the hunt can
@@ -4217,7 +4241,7 @@ function render(){
 //@file 14-screens
 // ---------- screens ----------
 let titleUp=true, paused=false, entryMode='in';
-let warmup=0, warmPlayers=0, LASTNET={online:true,mode:'arena'};   // arena warm-up: countdown before the round starts
+let warmup=0, warmPlayers=0, SEARCH=null, LASTNET={online:true,mode:'arena'};   // arena warm-up: countdown before the round starts
 // Ridge Defense (co-op waves) — everything here is told to us by the server
 let ARENA={lives:3,out:false,dead:false,deadT:0,finalT:0,leader:null};
 // Losing the connection mid-match used to freeze the world solid: the clock is
@@ -4306,8 +4330,8 @@ const LEGAL={
     <h2>10. Your rights</h2>
     <p>Whatever country you are in, and regardless of which privacy law applies to you, you can:</p>
     <ul>
-      <li><b>See everything we hold</b> — Progress tab → Download my data.</li>
-      <li><b>Delete it all</b> — Progress tab → Delete my account. Immediate and permanent.</li>
+      <li><b>See everything we hold</b> — Settings → Your data → Download my data.</li>
+      <li><b>Delete it all</b> — Settings → Your data → Delete my account. Immediate and permanent.</li>
       <li><b>Take it with you</b> — the download is plain JSON.</li>
       <li><b>Correct it, or ask us questions</b> — write to ${CONTACT_EMAIL}.</li>
     </ul>
@@ -4317,9 +4341,9 @@ const LEGAL={
     are defined, and we will not discriminate against you for exercising any right.</p>
 
     <h2>11. Children</h2>
-    <p>The game is suitable for most ages and we do not knowingly collect personal information
-    from children. Because we never ask for personal details, an account holds nothing more than
-    a nickname and a score. If you believe a child has given us something that should not be
+    <p>Ridgeline Season is a hunting game for players aged 13 and up. It is not directed at
+    children under 13 and we do not knowingly collect personal information from them. Because we
+    never ask for personal details, an account holds nothing more than a nickname and a score. If you believe a child has given us something that should not be
     here, write to ${CONTACT_EMAIL} and we will remove it.</p>
 
     <h2>12. Security</h2>
@@ -4344,8 +4368,8 @@ const LEGAL={
     and the privacy policy.</p>
 
     <h2>2. Who can play</h2>
-    <p>Anyone may play. If you are under the age where you live at which you can agree to terms
-    on your own, ask a parent or guardian first. To buy anything you must be old enough to use a
+    <p>You must be 13 or older to play. If you are under the age where you live at which you can
+    agree to terms on your own, ask a parent or guardian first. To buy anything you must be old enough to use a
     payment card in your country.</p>
 
     <h2>3. Your account</h2>
@@ -4436,11 +4460,17 @@ function showEntryForced(){
   updateEntryTabs();
 }
 function updateEntryTabs(){
-  const up=entryMode==='up';
+  const up=entryMode==='up', rec=entryMode==='rec';
   $('eTabIn').classList.toggle('on',!up); $('eTabUp').classList.toggle('on',up);
-  $('eGo').textContent=up?'Create account':'Sign in';
-  setTxt('eStatus',up?'Pick any name. Eight characters or more for the password.'
-                    :'An account saves your progress, stats and leaderboard place on every device.');
+  $('eGo').textContent=up?'Create account':rec?'Reset password':'Sign in';
+  $('eCodeRow').style.display=rec?'':'none';
+  $('eForgot').textContent=rec?'Back to sign in':'Forgot your password?';
+  $('eForgot').style.display=up?'none':'';
+  setTxt('ePassLabel',rec?'New password':'Password');
+  $('ePass').setAttribute('autocomplete',up||rec?'new-password':'current-password');
+  setTxt('eStatus',up?'Pick any name — you must be 13 or older. Use 8+ characters for the password; a short phrase works best.'
+                  :rec?'Enter your hunter name, the recovery code you saved when you signed up, and a new password.'
+                  :'An account saves your progress, stats and leaderboard place on every device.');
 }
 function enterGame(){
   $('entry').classList.add('hidden');
@@ -4449,9 +4479,11 @@ function enterGame(){
 async function entrySubmit(){
   const name=$('eUser').value.trim(), pw=$('ePass').value;
   if(!save.server&&DEFAULT_SERVER){ save.server=DEFAULT_SERVER; }
-  setTxt('eStatus', entryMode==='up'?'Creating your account…':'Signing in…');
+  setTxt('eStatus', entryMode==='up'?'Creating your account…':entryMode==='rec'?'Checking your recovery code…':'Signing in…');
   try{
-    const j=await api(entryMode==='up'?'/api/register':'/api/login',{name,password:pw});
+    const j=entryMode==='rec'
+      ? await api('/api/recover',{name,code:$('eCode').value.trim(),password:pw})
+      : await api(entryMode==='up'?'/api/register':'/api/login',{name,password:pw});
     save.token=j.token; account=j.user; save.name=account.name; GUEST=false; save.premium=!!(j.user&&j.user.premium);
     if(j.recoveryCode)showRecovery(j.recoveryCode);
     if(j.cloud){ const keep={server:save.server,token:save.token,vol:save.vol,lefty:save.lefty,btnSize:save.btnSize,hudScale:save.hudScale,controls:save.controls,autoRun:save.autoRun};
@@ -4654,7 +4686,7 @@ async function connectWithRetry(url,room,name,mode){
     catch(e){ lastErr=e; if(/full|ended|wrong|Too many/i.test(e&&e.message||''))break; await new Promise(r=>setTimeout(r,900)); } }
   throw lastErr||new Error('Could not reach the server');
 }
-async function startArena(online,netMode){
+async function startArena(online,netMode){ SEARCH=null;
   if(NET_BUSY)return;
   const defense=netMode==='defense';
   const nameEl=$('pName'), srvEl=$('pServer');
@@ -4795,7 +4827,10 @@ function onNetEvent(ev){
     if(ev.message)setTxt('netStatus','⚠ '+ev.message); return; }
   if(ev.t==='tagged'){
     if(ev.ok===false){ callout={text:'Not your animal',sub:ev.why||'',c:'#e0b45a',t:2}; return; }
-    score=ev.score; pushFeed('Tagged — '+ev.tags+' this match','','#7cff5a'); return; }
+    if(typeof ev.score==='number')score=ev.score;
+    const ta=(remoteAnimals&&remoteAnimals.get(ev.id))||animals.find(x=>x.id===ev.id);
+    harvestLocal(ta);
+    if(typeof ev.tags==='number')pushFeed('Tagged — '+ev.tags+' this match','','#7cff5a'); return; }
   if(ev.t==='feed'){ pushFeed(ev.name+' '+ev.text,'','#d8d0b8'); return; }
   if(ev.t==='kill'){ pushFeed(ev.name+' took a '+(ev.species||'animal').toLowerCase(),'+'+ev.points,'#d8d0b8'); const a=remoteAnimals.get(ev.animal); if(a){a.state='dead';a.deadT=0;} return; }
   if(ev.t==='joined')pushFeed(ev.name+' joined the arena','','#7cff5a');
@@ -4897,6 +4932,7 @@ function endDay(){
 }
 $('eTabIn').addEventListener('click',()=>{ entryMode='in'; updateEntryTabs(); });
 $('eTabUp').addEventListener('click',()=>{ entryMode='up'; updateEntryTabs(); });
+$('eForgot').addEventListener('click',()=>{ entryMode=entryMode==='rec'?'in':'rec'; updateEntryTabs(); });
 $('eGo').addEventListener('click',()=>{ audio(); entrySubmit(); });
 $('ePass').addEventListener('keydown',e=>{ if(e.key==='Enter'){ audio(); entrySubmit(); } });
 $('eGuest').addEventListener('click',()=>{ audio(); playAsGuest(); });
@@ -5032,10 +5068,12 @@ function lobbyModesRefresh(){ if(!LB||LB.tab!=='play'||$('lobby').classList.cont
 function renderModes(){
   const L=LEVELS.find(l=>l.id===lvlSel)||LEVELS[0], st=starsFor(L.id);
   const live=(typeof PRESENCE_N==='number'&&PRESENCE_N>0)?PRESENCE_N+' online':'';
+  const inA=LIVE.arena|0, inS=LIVE.squad|0;
   const sub={hunt:isNewHunter()?'Guided first hunt':'Hunt '+L.id+' · '+L.name,
              arena:'Two-minute matches · up to 8 hunters', squad:'Hold the ridge against waves'};
   const chip={hunt:isNewHunter()?'':'<span class="lbStars">'+'★'.repeat(st)+'☆'.repeat(3-st)+'</span>',
-              arena:live?'<span class="chip live">● '+live+'</span>':'', squad:''};
+              arena:inA?'<span class="chip live">● '+inA+' in matches</span>':(live?'<span class="chip live">● '+live+'</span>':''),
+              squad:inS?'<span class="chip live">● '+inS+' in squads</span>':''};
   $('lbModes').innerHTML=MODES.map(m=>`<button class="lbMode ${LB.mode===m.id?'on':''}" data-mode="${m.id}">
       <div class="t"><em>${m.kicker}</em><b>${m.name}</b><span>${esc(sub[m.id])}</span></div><div class="chip">${chip[m.id]}</div></button>`).join('');
   $('lbModes').querySelectorAll('.lbMode').forEach(b=>b.addEventListener('click',()=>pickMode(b.dataset.mode)));
@@ -5196,7 +5234,7 @@ var PARTY=null;   // {code, mode, size, bots, max, hostId, started, players, wai
 // Opened from an invite link? (?party=CODE) Join as soon as the player is in.
 let PENDING_PARTY=(()=>{ try{ const c=(new URLSearchParams(location.search).get('party')||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
   return c.length===6?c:null; }catch(e){ return null; } })();
-function partyLink(code){ return location.origin+location.pathname+'?party='+code; }
+function partyLink(code){ const web=/^https?:$/.test(location.protocol)&&!(window.RSNative&&RSNative.isNative); return (web?location.origin+location.pathname:'https://www.ridgelineseason.com/')+'?party='+code; }
 
 async function partyOpen(opts,netMode){
   if(PARTY)return;
@@ -5272,7 +5310,7 @@ function partyRender(){
   $('ptLink').value=P0.code?partyLink(P0.code):'';
   $('ptLink').placeholder='Your invite link appears here';
   $('ptCopy').disabled=!P0.code; $('ptShare').disabled=!P0.code;
-  $('ptShare').style.display=navigator.share?'':'none';
+  $('ptShare').style.display=(navigator.share||(window.RSNative&&RSNative.isNative))?'':'none';
   let slots='';
   for(let i=0;i<Math.max(P0.size,n);i++){ const p=people[i];
     if(p)slots+=`<div class="ptSlot${p.id===me?' me':''}"><i style="background:${esc(p.color||'#cfd8c9')}">${esc((p.name||'?')[0])}</i>
@@ -5306,7 +5344,9 @@ function partyCopy(){ if(!PARTY||!PARTY.code)return; const link=partyLink(PARTY.
   const done=ok=>{ b.textContent=ok?'Copied!':'Select the link and copy it'; setTimeout(()=>{ b.textContent='Copy invite link'; },1800); };
   try{ navigator.clipboard.writeText(link).then(()=>done(true),()=>{ legacy(); }); }catch(e){ legacy(); }
   function legacy(){ const i=$('ptLink'); i.focus(); i.select(); let ok=false; try{ ok=document.execCommand('copy'); }catch(e){} done(ok); } }
-function partyShare(){ if(!PARTY||!PARTY.code||!navigator.share)return;
+function partyShare(){ if(!PARTY||!PARTY.code)return;
+  if(window.RSNative&&RSNative.isNative){ RSNative.share({title:'Ridgeline Season',text:'Join my '+(PARTY.mode==='defense'?'Squad':'Arena')+' party on Ridgeline Season — code '+PARTY.code,url:partyLink(PARTY.code)}); return; }
+  if(!navigator.share)return;
   navigator.share({title:'Ridgeline Season',text:'Join my '+(PARTY.mode==='defense'?'Squad':'Arena')+' party on Ridgeline Season — code '+PARTY.code,
     url:partyLink(PARTY.code)}).catch(()=>{}); }
 
@@ -5323,6 +5363,49 @@ $('ptMore').addEventListener('click',()=>{ if(PARTY&&NETA)NETA.emit({t:'pset',si
 $('ptBots').addEventListener('change',e=>{ if(PARTY&&NETA)NETA.emit({t:'pset',bots:e.target.checked}); });
 //@file 17-start
 // ---------- start ----------
+// ---------------------------------------------------------------- phone apps
+// The iPhone/Android apps add window.RSNative (see mobile/src/native.js). On the
+// website most of this simply does nothing.
+(function(){
+  // On the website (no app around us) phones that can vibrate still get the buzzes.
+  if(!window.RSNative&&navigator.vibrate){
+    const V={shot:28,hit:18,kill:[20,40,30],miss:8,danger:[40,60,40],hurt:[60,40,90],tap:6,reward:[15,30,15]};
+    const on=()=>{ try{ return localStorage.getItem('rs_haptics')!=='off'; }catch(e){ return true; } };
+    let last=0;
+    window.RSNative={isNative:false,platform:'web',storeAllowed:true,appVersion:'',hapticsEnabled:on,
+      setHaptics:v=>{ try{ localStorage.setItem('rs_haptics',v?'on':'off'); }catch(e){} },
+      haptic:k=>{ if(!on()||!V[k])return; const n=Date.now(); if(k!=='kill'&&k!=='hurt'&&n-last<45)return; last=n; try{ navigator.vibrate(V[k]); }catch(e){} },
+      share:d=>navigator.share?navigator.share(d).catch(()=>{}):null, openExternal:u=>window.open(u,'_blank','noopener'), immersive:()=>{}};
+  }
+  const RN=window.RSNative;
+  // vibration setting (shown where the device can vibrate)
+  const canBuzz=!!(RN&&(RN.isNative||navigator.vibrate));
+  if(canBuzz){ $('hapticRow').style.display='';
+    const lab=()=>setTxt('optHaptic','Vibration: '+(RN.hapticsEnabled()?'on':'off'));
+    lab(); $('optHaptic').addEventListener('click',()=>{ RN.setHaptics(!RN.hapticsEnabled()); lab(); if(RN.hapticsEnabled())RN.haptic('tap'); }); }
+  if(!RN||!RN.isNative)return;
+  // app version in the settings footer, and a nudge when the server needs a newer app
+  setTimeout(()=>{ if(RN.appVersion)setTxt('appVer',' · app '+RN.appVersion); },1500);
+  const newer=(a,b)=>{ const x=String(a).split('.').map(n=>n|0), y=String(b).split('.').map(n=>n|0);
+    for(let i=0;i<3;i++){ if((x[i]|0)!==(y[i]|0))return (x[i]|0)>(y[i]|0); } return false; };
+  setTimeout(async()=>{ try{ const base=httpBase(); if(!base)return; const j=await (await fetch(base+'/api/status')).json();
+    const mine=(RN.appVersion||'').split(' ')[0];
+    if(j&&j.minApp&&mine&&newer(j.minApp,mine))callout={text:'Update available',sub:'Online play needs the latest version — update Ridgeline Season in the '+(RN.platform==='ios'?'App Store':'Play Store'),c:'#e0b45a',t:8};
+  }catch(e){} },3000);
+  // leaving the app pauses the hunt and silences it
+  window.addEventListener('rs:pause',()=>{ keys={}; edgeTurn=0; breathHold=false; scoped=false;
+    if(running&&!paused&&mode!=='arena'&&mode!=='defense')pauseGame();
+    try{ if(AC&&AC.state==='running')AC.suspend(); }catch(e){} });
+  window.addEventListener('rs:resume',()=>{ try{ if(AC&&AC.state==='suspended')AC.resume(); }catch(e){} });
+  // Android back: close what is open, otherwise pause; at the menu the app goes to the background
+  window.addEventListener('rs:back',e=>{
+    const open=id=>{ const el=$(id); return el&&!el.classList.contains('hidden'); };
+    if(open('legal')){ $('legal').classList.add('hidden'); e.preventDefault(); return; }
+    if(open('lbDrawer')){ closeDrawer(); e.preventDefault(); return; }
+    if(paused){ resumeGame(); e.preventDefault(); return; }
+    if(running&&canPause()){ pauseGame(); e.preventDefault(); return; }
+  });
+})();
 applyControlMode(); applyLayoutPrefs(); buildWorld(); showLobby(); showEntry(); requestAnimationFrame(frame);
 })();
 </script>
