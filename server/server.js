@@ -48,15 +48,19 @@ const ORIGIN = process.env.ORIGIN || process.env.Origin || '*';   // set to your
 const ALLOWED = ORIGIN === '*' ? null : new Set(ORIGIN.split(',').map(o => o.trim().replace(/\/+$/, '')).filter(Boolean).flatMap(o => {
   try { const u = new URL(o); const bare = u.host.replace(/^www\./, '');   // host keeps a :port if there is one
         return [u.protocol + '//' + bare, u.protocol + '//www.' + bare]; } catch (e) { return [o]; } }));
+// The iPhone and Android apps load the game from inside the app, so their
+// requests come from these origins rather than from the website.
+const APP_ORIGINS = new Set(['capacitor://localhost', 'https://localhost', 'http://localhost', 'ionic://localhost']);
 function corsFor(req) {
   const o = req && req.headers && req.headers.origin;
+  if (o && APP_ORIGINS.has(o)) return o;
   if (!ALLOWED) return '*';
   return o && ALLOWED.has(o.replace(/\/+$/, '')) ? o : [...ALLOWED][0];
 }
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v18';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v22';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -66,8 +70,12 @@ const PAYPAL_API = process.env.PAYPAL_LIVE === '1' ? 'https://api-m.paypal.com' 
 const SITE_URL = (process.env.SITE_URL || 'http://localhost:8080').replace(/\/+$/, '');
 const PRICE_CENTS = parseInt(process.env.PRICE_CENTS || '499', 10);
 const CURRENCY = (process.env.CURRENCY || 'usd').toLowerCase();
+// Oldest app build that still speaks this server's language. Raise it only
+// when an update changes the protocol; older apps then ask the player to update.
+const MIN_APP_VERSION = process.env.MIN_APP_VERSION || '1.0.0';
 const PENDING = new Map();   // paypal order id -> account name
 const TICK_MS = 66;                                // 15 Hz
+const CARCASS_MS = 45000;                       // how long an untagged kill stays in the arena
 const MATCH_SECONDS = 120;   // two minutes: tight enough that every shot matters
 const MAX_PER_ROOM = 8;
 const MAP_R = 300;
@@ -100,6 +108,11 @@ function migrate() {
   DB.schema = DB.schema | 0;
   DB.daily = DB.daily || {}; DB.events = DB.events || []; DB.seasons = DB.seasons || {}; DB.tokens = DB.tokens || {};
   DB.totals = Object.assign({ plays: 0, signups: 0, guestSessions: 0 }, DB.totals || {});
+  // Session keys used to be stored as-is. Store only their hash (old sign-ins keep working).
+  if (Object.keys(DB.tokens).some(k => !k.startsWith('h:'))) {
+    const t = {}; for (const [k, v] of Object.entries(DB.tokens)) t[k.startsWith('h:') ? k : tkey(k)] = v;
+    DB.tokens = t;  setTimeout(persist, 2000);
+  }
   for (const u of Object.values(DB.users)) {
     u.stats = Object.assign({ harvests: 0, bestArena: 0, arenaWins: 0, campaignStars: 0, longest: 0, chalLong: 0, chalKills: 0, chalTags: 0, bestWave: 0 }, u.stats || {});
     if (u.premium == null) u.premium = false;
@@ -265,6 +278,40 @@ load();
 
 // ---------------------------------------------------------------- accounts
 const NAME_RE = /^[A-Za-z0-9_]{3,14}$/;
+// Names other players will see. Stops impersonation and the worst words —
+// both app stores require this for anything players can read.
+const RESERVED = ['admin', 'administrator', 'moderator', 'mod', 'ridgeline', 'ridgelineseason', 'support', 'official', 'staff',
+  'system', 'server', 'owner', 'developer', 'dev', 'moonvision', 'apple', 'google', 'guest', 'null', 'undefined', 'root', 'help'];
+const BLOCKED = ['fuck', 'fuk', 'fck', 'shit', 'cunt', 'bitch', 'whore', 'slut', 'dick', 'cock', 'pussy', 'penis', 'vagina', 'porn',
+  'sex', 'rape', 'nazi', 'hitler', 'kkk', 'nigg', 'nigga', 'niga', 'fag', 'faggot', 'retard', 'tranny', 'chink', 'spic', 'kike',
+  'wetback', 'coon', 'gook', 'dyke', 'jizz', 'cum', 'anal', 'anus', 'tits', 'boob', 'molest', 'pedo', 'isis', 'jihad', 'killyourself', 'kys'];
+function nameProblem(name) {
+  const flat = String(name).toLowerCase().replace(/_/g, '').replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e')
+    .replace(/4/g, 'a').replace(/5/g, 's').replace(/7/g, 't').replace(/\$/g, 's');
+  if (RESERVED.some(r => flat === r || (r.length > 4 && flat.startsWith(r)))) return 'That name is reserved — pick another';
+  if (BLOCKED.some(b => flat.includes(b))) return 'That name is not allowed — pick another';
+  return null;
+}
+const WEAK = new Set(['password', 'password1', 'password12', 'password123', '12345678', '123456789', '1234567890', '11111111',
+  '00000000', 'qwertyui', 'qwerty123', 'qwertyuiop', 'iloveyou', 'abc12345', 'abcd1234', 'letmein1', 'welcome1', 'sunshine',
+  'football', 'baseball', 'princess', 'trustno1', 'passw0rd', 'hunting1', 'ridgeline', 'ridgeline1', 'deerhunter', '87654321']);
+function passwordProblem(pw, name) {
+  if (pw.length < 8) return 'Password must be at least 8 characters';
+  if (pw.length > 200) return 'Password is too long';
+  const l = pw.toLowerCase();
+  if (WEAK.has(l) || (name && l.includes(String(name).toLowerCase())) || /^(.)\1+$/.test(pw)) return 'That password is too easy to guess — try a longer phrase';
+  return null;
+}
+// Too many wrong passwords for one name locks that name for a while, wherever the guesses come from.
+const loginFails = new Map();
+function lockedOut(name) { const f = loginFails.get(name); return f && f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 60000) : 0; }
+function noteFail(name) {
+  const now = Date.now(), f = loginFails.get(name) || { n: 0, first: now, until: 0 };
+  if (now - f.first > 15 * 60e3) { f.n = 0; f.first = now; }
+  f.n++; if (f.n >= 8) { f.until = now + 15 * 60e3; f.n = 0; f.first = now; }
+  loginFails.set(name, f);
+}
+setInterval(() => { const now = Date.now(); for (const [k, f] of loginFails) if (f.until < now && now - f.first > 15 * 60e3) loginFails.delete(k); }, 300e3);
 function hashPassword(pw, salt) {
   salt = salt || crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(pw, salt, 64, { N: 16384, r: 8, p: 1 }).toString('hex');
@@ -292,16 +339,18 @@ function newUser(name, pw) {
     cloud: null,          // client's campaign save, backed up here
   };
 }
+function tkey(tok) { return 'h:' + crypto.createHash('sha256').update(String(tok)).digest('base64url'); }
 function issueToken(name) {
   const tok = crypto.randomBytes(24).toString('base64url');
-  DB.tokens[tok] = { name, at: Date.now() };
+  DB.tokens[tkey(tok)] = { name, at: Date.now() };
   persist();
   return tok;
 }
 function userFromToken(tok) {
-  const t = tok && DB.tokens[tok];
+  if (!tok || typeof tok !== 'string' || tok.length > 100) return null;
+  const k = tkey(tok), t = DB.tokens[k];
   if (!t) return null;
-  if (Date.now() - t.at > 30 * 86400e3) { delete DB.tokens[tok]; return null; }
+  if (Date.now() - t.at > 30 * 86400e3) { delete DB.tokens[k]; return null; }
   return DB.users[t.name.toLowerCase()] || null;
 }
 function grantPremium(name, how) {
@@ -428,6 +477,8 @@ function json(res, code, obj) {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store',
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+    'X-Frame-Options': 'DENY',
   });
   res.end(JSON.stringify(obj));
 }
@@ -437,7 +488,12 @@ function readBody(req) {
     req.on('end', () => { try { resolve(s ? JSON.parse(s) : {}); } catch { reject(new Error('bad json')); } });
   });
 }
-function ipOf(req) { return (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(); }
+function ipOf(req) {
+  const h = req.headers;
+  if (h['do-connecting-ip']) return String(h['do-connecting-ip']).trim();
+  const xff = String(h['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
+  return xff.length ? xff[xff.length - 1] : (req.socket.remoteAddress || '');
+}
 
 
 // ---------------------------------------------------------------- admin page
@@ -572,7 +628,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return json(res, 204, {});
   try {
     if (url.pathname === '/' || url.pathname === '/api/status') {
-      return json(res, 200, { ok: true, build: BUILD,
+      if (url.searchParams.get('sid')) presenceTouch(url.searchParams.get('sid'), url.searchParams.get('where'));
+      const lc = liveCounts();
+      return json(res, 200, { ok: true, live: lc, build: BUILD, minApp: MIN_APP_VERSION,
         storage: dbReady ? 'postgres' : DATABASE_URL ? 'database-unreachable' : 'ephemeral-file',
         ...(dbDown ? { problem: dbDown } : {}), players: [...rooms.values()].reduce((a, r) => a + realCount(r), 0), rooms: rooms.size, accounts: Object.keys(DB.users).length, payments: !!(STRIPE_KEY && STRIPE_WEBHOOK_SECRET) || !!(PAYPAL_ID && PAYPAL_SECRET) });
     }
@@ -584,7 +642,8 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const name = String(b.name || '').trim(), pw = String(b.password || '');
       if (!NAME_RE.test(name)) return json(res, 400, { error: 'Name must be 3–14 letters, numbers or _' });
-      if (pw.length < 8) return json(res, 400, { error: 'Password must be at least 8 characters' });
+      const np = nameProblem(name); if (np) return json(res, 400, { error: np });
+      const pp = passwordProblem(pw, name); if (pp) return json(res, 400, { error: pp });
       if (DB.users[name.toLowerCase()]) return json(res, 409, { error: 'That name is taken' });
       const u0 = newUser(name, pw);
       const recoveryCode = u0.recovery; delete u0.recovery;   // shown once, never kept in plain text
@@ -597,8 +656,12 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/login' && req.method === 'POST') {
       if (limited('login:' + ip, 20, 900e3)) return json(res, 429, { error: 'Too many attempts. Wait 15 minutes.' });
       const b = await readBody(req);
-      const u = DB.users[String(b.name || '').trim().toLowerCase()];
-      if (!u || !verifyPassword(String(b.password || ''), u)) return json(res, 401, { error: 'Wrong name or password' });
+      const lname = String(b.name || '').trim().toLowerCase().slice(0, 32);
+      const mins = lockedOut(lname);
+      if (mins) return json(res, 429, { error: `Too many wrong passwords for this name. Try again in ${mins} minute${mins > 1 ? 's' : ''}, or use your recovery code.` });
+      const u = DB.users[lname];
+      if (!u || !verifyPassword(String(b.password || ''), u)) { noteFail(lname); return json(res, 401, { error: 'Wrong name or password' }); }
+      loginFails.delete(lname);
       u.lastSeen = Date.now(); persist();
       return json(res, 200, { token: issueToken(u.name), user: publicStats(u), cloud: u.cloud });
     }
@@ -608,7 +671,7 @@ const server = http.createServer(async (req, res) => {
       const u = DB.users[String(b.name || '').trim().toLowerCase()];
       const code = String(b.code || '').toUpperCase().trim();
       const pw = String(b.password || '');
-      if (pw.length < 8) return json(res, 400, { error: 'New password must be at least 8 characters' });
+      const pp = passwordProblem(pw, b.name); if (pp) return json(res, 400, { error: pp });
       if (!u || !u.recHash) return json(res, 401, { error: 'Wrong name or recovery code' });
       const test = hashPassword(code, u.recSalt);
       let ok = false;
@@ -621,7 +684,7 @@ const server = http.createServer(async (req, res) => {
       for (const [tok, t] of Object.entries(DB.tokens)) if (t.name === u.name) delete DB.tokens[tok];
       persist();
       console.log(`[account] ${u.name} recovered their password`);
-      return json(res, 200, { token: issueToken(u.name), user: publicStats(u), recoveryCode: next });
+      return json(res, 200, { token: issueToken(u.name), user: publicStats(u), recoveryCode: next, cloud: u.cloud });
     }
     const token = (req.headers.authorization || '').replace(/^Bearer /, '');
     if (url.pathname === '/api/me') {
@@ -642,11 +705,13 @@ const server = http.createServer(async (req, res) => {
       for (const [tok, t] of Object.entries(DB.tokens)) if (t.name === u.name) delete DB.tokens[tok];
       DB.events = DB.events.filter(e => e.who !== u.name);
       for (const d of Object.values(DB.daily)) if (d.players) delete d.players[u.name];
+      for (const se of Object.values(DB.seasons)) if (se.table) se.table = se.table.filter(r => r.name !== u.name);
+      for (const r of rooms.values()) for (const pl of r.players.values()) if (pl.name === u.name && pl.ws) { try { pl.ws.close(4001, 'account deleted'); } catch (e) {} }
       persist();
       console.log(`[account] ${u.name} deleted their account`);
       return json(res, 200, { ok: true });
     }
-    if (url.pathname === '/api/logout' && req.method === 'POST') { delete DB.tokens[token]; persist(); return json(res, 200, { ok: true }); }
+    if (url.pathname === '/api/logout' && req.method === 'POST') { if (token) delete DB.tokens[tkey(token)]; persist(); return json(res, 200, { ok: true }); }
     if (url.pathname === '/api/cloud' && req.method === 'POST') {
       // Campaign save backup. Self-reported (single-player), so it feeds only
       // the "campaignStars" figure which is shown separately from arena stats.
@@ -826,7 +891,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/admin/')) {
       if (!adminOk(req.headers['x-admin-key'])) return json(res, 403, { error: 'Forbidden' });
       if (url.pathname === '/api/admin/users') return json(res, 200, Object.values(DB.users).map(u => ({ ...publicStats(u), created: u.created })));
-      if (url.pathname === '/api/admin/rooms') return json(res, 200, [...rooms.values()].map(r => ({ name: r.name, players: [...r.players.values()].map(p => p.name), seconds: Math.round(r.timeLeft) })));
+      if (url.pathname === '/api/admin/rooms') return json(res, 200, [...rooms.values()].map(r => ({ name: r.name, mode: r.party ? 'party' : isDefense(r) ? 'squad' : 'arena', phase: r.phase || '', live: realCount(r), players: [...r.players.values()].map(p => p.name + (p.bot ? ' (bot)' : '')), seconds: Math.round(r.timeLeft) })));
       if (url.pathname === '/api/admin/stats') return json(res, 200, analytics());
       // One-click backup: everything the server holds, as a file you can save.
       if (url.pathname === '/api/admin/backup') {
@@ -1044,7 +1109,10 @@ function resolveShot(room, p, m, opts) {
   p.score += pts; p.kills++;
   if (a.trophy) p.trophies++;
   p.longest = Math.max(p.longest, dist);
-  setTimeout(() => { if (rooms.has(room.name)) { room.animals = room.animals.filter(x => x.id !== a.id); room.animals.push(spawnAnimal(room)); } }, 5000);
+  // The carcass stays out there long enough to walk to and tag; a fresh animal
+  // comes in straight away so the ridge never empties.
+  room.animals.push(spawnAnimal(room));
+  setTimeout(() => { if (rooms.has(room.name)) room.animals = room.animals.filter(x => x.id !== a.id); }, CARCASS_MS);
   return { ok: true, hit: { id: a.id, zone, dist, killed: true, pts, species: a.sp, trophy: a.trophy } };
 }
 
@@ -1574,6 +1642,72 @@ function getRoom(name) {
   r.emptiedAt = 0;
   return r;
 }
+// ---------------------------------------------------------------- live presence
+// Everyone with the game open (lobby, menus, a solo hunt) checks in every 20 s
+// with a random tab id. Nothing personal is kept: an id and the time we last
+// heard from it, forgotten after a minute and a half.
+const PRESENCE = new Map();
+const PRESENCE_TTL = 90e3;
+function presenceTouch(sid, where) {
+  if (!/^[a-z0-9]{8,24}$/i.test(sid || '')) return;
+  if (!PRESENCE.has(sid) && PRESENCE.size > 20000) return;      // a flood of fake ids cannot grow this without bound
+  PRESENCE.set(sid, { t: Date.now(), where: String(where || '').slice(0, 10) });
+}
+function liveCounts() {
+  const now = Date.now();
+  for (const [k, v] of PRESENCE) if (now - v.t > PRESENCE_TTL) PRESENCE.delete(k);
+  let arena = 0, squad = 0, parties = 0, searching = 0;
+  for (const r of rooms.values()) {
+    const n = realCount(r); if (!n) continue;
+    if (r.party) parties += n; else if (isDefense(r)) squad += n; else arena += n;
+    if (!r.party && (r.phase === 'warm' || r.phase === 'over' || !r.phase)) searching += n;
+  }
+  const inMatch = arena + squad + parties;
+  // people in a match also have the page open, so "online" is whichever is bigger
+  return { online: Math.max(PRESENCE.size, inMatch), inMatch, arena, squad, parties, searching };
+}
+
+// ---------------------------------------------------------------- matchmaking
+// PLAY in Arena or Squad is a quick match. It used to drop everybody into one
+// room called RIDGE, which was full at 8 (bots included) and turned the ninth
+// person away. Now it looks for the public room with the most live hunters
+// that still has space and enough time left to be worth joining, and only
+// opens a new room when there is none. Bots never take a live player's place.
+const ARENA_JOIN_MIN_LEFT = 30;     // don't drop someone into the last 30 s of a match
+const SQUAD_JOIN_MAX_WAVE = 4;      // joining a squad on wave 9 is no fun for anyone
+function publicRoomOpen(r, defense) {
+  if (r.party || !!isDefense(r) !== !!defense) return false;
+  if (!/^(D_)?RIDGE\d*$/.test(r.name)) return false;             // named rooms from old builds are left alone
+  const cap = defense ? DEF_MAX : MAX_PER_ROOM;
+  if (realCount(r) >= cap) return false;
+  if (defense) return !r.phase || r.phase === 'warm' || r.phase === 'over' || (r.wave | 0) <= SQUAD_JOIN_MAX_WAVE;
+  return !r.running || r.timeLeft > ARENA_JOIN_MIN_LEFT;
+}
+function pickPublicRoom(defense) {
+  let best = null;
+  for (const r of rooms.values()) {
+    if (!publicRoomOpen(r, defense)) continue;
+    const n = realCount(r);
+    // most live hunters first; between equals, one still warming up beats one mid-match
+    const score = n * 10 + (r.phase === 'warm' ? 3 : 0) + (r.running ? 0 : 1);
+    if (!best || score > best.score) best = { r, score };
+  }
+  if (best) return best.r.name;
+  const base = (defense ? 'D_' : '') + 'RIDGE';
+  if (!rooms.has(base) || publicRoomOpen(rooms.get(base), defense) || realCount(rooms.get(base)) === 0) return base;
+  for (let i = 2; i < 500; i++) { const n = base + i; if (!rooms.has(n) || realCount(rooms.get(n)) === 0) return n; }
+  return base;
+}
+// While a public room is warming up it is also searching: the countdown is
+// longer when you are the only live hunter, and when somebody new arrives it
+// never has less than a few seconds left, so they can find their feet.
+const SEARCH_SECONDS = 20, ARRIVAL_GRACE = 8;
+function searchUpdate(room) {
+  if (room.party) return;
+  const live = realCount(room), bots = [...room.players.values()].filter(q => q.bot).length;
+  broadcast(room, { t: 'search', live, bots, online: liveCounts().online, seconds: Math.ceil(isDefense(room) ? room.warmLeft : room.warmLeft) });
+}
+
 function send(ws, o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 function broadcast(room, o, except) { const m = JSON.stringify(o); for (const p of room.players.values()) if (p.id !== except && p.ws && p.ws.readyState === 1) p.ws.send(m); }
 const WARMUP_SECONDS = 12;   // same wait as Ridge Defense, so both modes feel alike
@@ -1762,12 +1896,18 @@ wss.on('connection', (ws, req) => {
         if (!name || !rooms.get(name).party) { send(ws, { t: 'error', code: 'noparty', message: 'That party has ended, or the code is wrong' }); return setTimeout(() => { try { ws.close(); } catch (e) {} }, 100); }
         room = getRoom(name); defense = isDefense(room);
       } else {
-        const roomName = (defense ? 'D_' : '') + (String(m.room || 'RIDGE').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'RIDGE');
+        const asked = String(m.room || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+        // no room asked for (or the old default) = quick match: find live hunters
+        const roomName = (!asked || asked === 'RIDGE') ? pickPublicRoom(defense) : (defense ? 'D_' : '') + asked;
         room = getRoom(roomName);
         if (defense && !room.mode) { room.mode = 'defense'; room.wave = 0; }
       }
       const cap = defense ? DEF_MAX : MAX_PER_ROOM;
-      const name = user ? user.name : ('Guest' + (String(m.name || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 10) || nextPid));
+      let gname = String(m.name || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 10);
+      if (gname && nameProblem(gname)) gname = '';
+      let name = user ? user.name : ('Guest' + (gname || nextPid));
+      // two guests both called Hunter used to show up as two "GuestHunter"s
+      if (!user) { const taken = new Set([...room.players.values()].filter(q => !q.gone).map(q => q.name)); if (taken.has(name)) { let i = 2; while (taken.has(name + i)) i++; name = name + i; } }
       // Coming back from a dropped connection: same person, same match, same score.
       // Identity has to be proved, not claimed. A signed-in player is already
       // proved by their token; everyone else gets a one-off key at join and has
@@ -1791,7 +1931,7 @@ wss.on('connection', (ws, req) => {
         send(ws, { t: 'error', code: 'full', message: 'This party is full (' + room.party.size + ' of ' + room.party.size + ')' });
         return setTimeout(() => { try { ws.close(); } catch (e) {} }, 100);
       }
-      if (room.players.size >= cap && !(room.party && dropBot(room))) {
+      if (room.players.size >= cap && !dropBot(room)) {
         send(ws, { t: 'error', message: 'Room is full' }); return setTimeout(() => { try { ws.close(); } catch (e) {} }, 100); }
       p = { id: 'p' + (nextPid++), name, user, resumeKey: crypto.randomBytes(9).toString('hex'), color: COLORS[room.players.size % COLORS.length], ws,
             x: 0, z: 0, yaw: 0, score: 0, kills: 0, tags: 0, trophies: 0, longest: 0, firing: 0, lastShot: -9, lastState: Date.now() };
@@ -1811,15 +1951,17 @@ wss.on('connection', (ws, req) => {
         if (!room.party.started) { console.log(`[party] ${p.name} is waiting in ${room.party.code}`); return; }
       }
       if (isDefense(room)) {
-        if (!room.phase || room.phase === 'over') defStartRun(room);
+        if (!room.phase || room.phase === 'over') defStartRun(room, (!room.party && realCount(room) <= 1) ? SEARCH_SECONDS : undefined);
         else if (room.phase === 'warm') send(ws, { t: 'warmup', seconds: Math.ceil(room.warmLeft), players: room.players.size, defense: true,
           team: [...room.players.values()].map(q => ({ id: q.id, name: q.name, bot: !!q.bot, color: q.color })) });
         else send(ws, { t: 'wave', n: room.wave, late: true });
       }
-      else if (room.phase === 'warm') send(ws, { t: 'warmup', seconds: Math.ceil(room.warmLeft), players: room.players.size });
-      else if (!room.running) startWarmup(room);
+      else if (room.phase === 'warm') { room.warmLeft = Math.max(room.warmLeft, ARRIVAL_GRACE); send(ws, { t: 'warmup', seconds: Math.ceil(room.warmLeft), players: room.players.size }); }
+      else if (!room.running) startWarmup(room, (!room.party && realCount(room) <= 1) ? SEARCH_SECONDS : WARMUP_SECONDS);
       else send(ws, { t: 'start', seconds: room.timeLeft });
-      console.log(`[join] ${p.name}${user ? '' : ' (guest)'} -> ${room.name}`);
+      if (isDefense(room) && room.phase === 'warm' && !room.party) room.warmLeft = Math.max(room.warmLeft, ARRIVAL_GRACE);
+      if (!room.party && room.phase === 'warm') searchUpdate(room);
+      console.log(`[join] ${p.name}${user ? '' : ' (guest)'} -> ${room.name} (${realCount(room)} live)`);
       return;
     }
     if (!p || !room) return;
@@ -1889,6 +2031,7 @@ wss.on('connection', (ws, req) => {
         return;
       }
       a.tagged = true; p.tags++;
+      if (!isDefense(room)) setTimeout(() => { if (rooms.has(room.name)) room.animals = room.animals.filter(x => x.id !== a.id); }, 3000);
       if (isDefense(room)) { const bonus = Math.round(SP[a.sp].pts * .4 * (a.pred ? (1 + .16 * ((a.wave | 1) - 1)) : .3)); p.pts = (p.pts | 0) + bonus; p.ptsEarned = (p.ptsEarned | 0) + bonus; }
       p.score += Math.round(SP[a.sp].pts * 0.15);
       send(ws, { t: 'tagged', id: a.id, tags: p.tags, score: p.score, pts: p.pts | 0 });
@@ -1915,7 +2058,6 @@ wss.on('connection', (ws, req) => {
       try { ws.close(); } catch (e) {}
       return;
     }
-    if (m.t === 'chat') broadcast(room, { t: 'chat', name: p.name, text: String(m.text || '').slice(0, 120) }, p.id);
   });
   ws.on('close', () => {
     if (!p || !room) return;
@@ -1933,11 +2075,13 @@ wss.on('connection', (ws, req) => {
     room.players.delete(p.id);
     broadcast(room, { t: 'left', id: p.id });
     if (realCount(room) === 0) { room.emptiedAt = Date.now(); room.running = false; room.seed = (Math.random() * 0xffffffff) >>> 0; }
+    else if (!room.party && room.phase === 'warm') searchUpdate(room);
     partyEmptied(room); if (room.party) partyBroadcast(room);
   });
   ws.on('error', () => {});
 });
 
+setInterval(() => { for (const r of rooms.values()) if (!r.party && r.phase === 'warm' && realCount(r) > 0) searchUpdate(r); }, 3000);
 // Simulation + broadcast tick.
 setInterval(() => {
   const dt = TICK_MS / 1000;
