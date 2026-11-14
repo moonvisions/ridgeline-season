@@ -5403,7 +5403,8 @@ function renderLobby(){
 // ---------------------------------------------------------------- PLAY
 // Just the three mode cards — redrawn when the live player count changes,
 // without touching the name and room fields the player may be typing in.
-function lobbyModesRefresh(){ if(!LB||LB.tab!=='play'||$('lobby').classList.contains('hidden'))return; renderModes(); }
+function lobbyModesRefresh(){ { const ll=$('lbLiveLine'); if(ll&&LB&&(LB.mode==='arena'||LB.mode==='squad')){ ll.textContent=liveLine(LB.mode==='arena'); const qb=$('lbQuick'); if(qb)qb.textContent=quickLabel(LB.mode==='arena'); } }
+  if(!LB||LB.tab!=='play'||$('lobby').classList.contains('hidden'))return; renderModes(); }
 function renderModes(){
   const L=LEVELS.find(l=>l.id===lvlSel)||LEVELS[0], st=starsFor(L.id);
   const live=(typeof PRESENCE_N==='number'&&PRESENCE_N>0)?PRESENCE_N+' online':'';
@@ -5419,6 +5420,15 @@ function renderModes(){
   $('lbMore').innerHTML='More modes '+MORE.map(m=>`<button data-mode="${m.id}" class="${LB.mode===m.id?'on':''}">${m.name}</button>`).join('');
   $('lbMore').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>pickMode(b.dataset.mode)));
 }
+// What "online now" means for this mode, in a sentence. LIVE comes from the
+// server every 20 seconds; "online" counts you too.
+function liveLine(arena){
+  const inM=arena?(LIVE.arena|0):(LIVE.squad|0), others=Math.max(0,(LIVE.online|0)-1), what=arena?'match':'squad';
+  if(inM>0)return inM+(inM===1?' hunter is':' hunters are')+' in a '+what+' right now. Join and you go in with them.';
+  if(others>0)return others+(others===1?' other person is':' other people are')+' online, but nobody is in a '+what+' yet. Start one and anyone who joins lands in yours; bots fill the empty places until they do.';
+  return 'Nobody else is online at the moment. You can still play: bots fill the '+what+', and anyone who joins while you play lands in with you.';
+}
+function quickLabel(arena){ const inM=arena?(LIVE.arena|0):(LIVE.squad|0); return inM>0?(arena?'Join a live match':'Join a live squad'):(arena?'Start an online match':'Start an online squad'); }
 function renderPlay(){
   renderModes();
   const L=LEVELS.find(l=>l.id===lvlSel)||LEVELS[0], st=starsFor(L.id), online=SERVER_OK!==false;
@@ -5448,8 +5458,14 @@ function renderPlay(){
         :'Two to six hunters hold a valley against waves of bears and lions. Buy upgrades between waves. Stand by a fallen teammate to pick them up.'}</p>
       <div class="lbFacts">${arena?'<span>2 min</span><span>Up to 8</span><span>3 lives</span>':'<span>Waves</span><span>Shop between waves</span><span>Revives</span>'}</div>
       ${online?'':'<p class="lbSmall" style="color:#ffb36b;margin-top:10px">The game server cannot be reached right now — you will play against practice bots.</p>'}
+      <div class="lbParty" style="${online?'':'display:none'}">
+        <h4>Play online now</h4>
+        <p class="lbSmall" id="lbLiveLine" style="margin:0 0 10px">${esc(liveLine(arena))}</p>
+        <button class="lbBtn lbBtnHot" id="lbQuick">${esc(quickLabel(arena))}</button>
+        <p class="lbSmall" style="margin:8px 0 0;color:var(--faint)">Puts you in with whoever is playing right now. No code needed.</p>
+      </div>
       <div class="lbParty">
-        <h4>Play with friends</h4>
+        <h4>Or play privately with friends</h4>
         <div class="lbSizes" id="lbSizes">Players ${partySizes(arena).map(n=>`<button data-n="${n}" class="${partyPick(arena)===n?'on':''}">${n}</button>`).join('')}</div>
         <label class="ptToggle lbSmall"><input type="checkbox" id="lbBots" ${LB.pbots?'checked':''}> Fill empty places with bots</label>
         <button class="lbBtn lbBtnHot" id="lbCreate" ${online?'':'disabled'}>Create party &amp; get invite link</button>
@@ -5460,6 +5476,7 @@ function renderPlay(){
       <div class="lbField"><input id="pName" maxlength="14" placeholder="Hunter" value="${esc(save.name||'')}"></div>
       `;
     $('pName').addEventListener('change',e=>{ save.name=e.target.value.trim(); persist(); });
+    $('lbQuick').addEventListener('click',()=>{ if(!NET_BUSY)lobbyPlay(); });
     $('lbSizes').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ LB['psize'+(arena?'A':'S')]=+b.dataset.n; tone(520,.04,.05,'sine'); renderPlay(); }));
     $('lbBots').addEventListener('change',e=>{ LB.pbots=e.target.checked; });
     $('lbCreate').addEventListener('click',()=>{ lobbyName(); audio(); partyOpen({create:true,size:partyPick(arena),bots:!!LB.pbots},arena?'arena':'defense'); });
@@ -5468,7 +5485,7 @@ function renderPlay(){
     code.addEventListener('input',()=>{ code.value=code.value.toUpperCase().replace(/[^A-Z0-9]/g,''); setTxt('lbPartyErr',''); });
     code.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); e.stopPropagation(); join(); } });
     $('lbJoinBtn').addEventListener('click',join);
-    setPlay(arena?'Arena · quick match':'Squad · quick match',true); return; }
+    setPlay(arena?(online?'Arena · join live match':'Arena · practice'):(online?'Squad · join live squad':'Squad · practice'),true); return; }
   if(LB.mode==='surv'){
     d.innerHTML=`<div class="lbPick"><div class="n"><small>Solo</small><b>Survival</b></div></div>
       <p class="lbSmall">Endless waves of boar, then bears. Cash is banked after every wave. How long can you hold?</p>
