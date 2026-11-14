@@ -60,7 +60,7 @@ function corsFor(req) {
 const ADMIN_KEY = process.env.ADMIN_KEY || '';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';   // set by DigitalOcean when a database is attached
-const BUILD = 'arena-v22';                              // shown by /api/status so you can see what is live
+const BUILD = 'arena-v23';                              // shown by /api/status so you can see what is live
 // ---- payments (all optional; set only what you use) ----
 const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -1095,7 +1095,7 @@ function resolveShot(room, p, m, opts) {
     const pts = Math.round(SP.bear.pts * 3 * (1 + best.dist / 100));
     p.score += pts; p.kills++;
     setTimeout(() => { if (rooms.has(room.name) && room.running) { room.animals = room.animals.filter(x => x.id !== a.id); const b = spawnPredator(room, Math.random() < .45 ? 'lion' : 'bear', 1); b.roamer = true; b.cool = 2; room.animals.push(b); } }, 5000);
-    return { ok: true, hit: { id: a.id, zone: best.zone, dist: best.dist, killed: true, pts, species: 'bear' } };
+    return { ok: true, hit: { id: a.id, zone: best.zone, dist: best.dist, killed: true, pts, species: a.sp === 'lion' ? 'lion' : 'bear' } };
   }
   if (room.mode === 'defense') return { ok: true, hit: { a: best.a, zone: best.zone, dist: best.dist } };   // caller applies damage
   const { a, zone, dist } = best, s = SP[a.sp];
@@ -1764,7 +1764,8 @@ function stockArena(room) {
     b.roamer = true; b.cool = 1 + Math.random() * 1.5;
     room.animals.push(b);
   }
-  if (room.animals.length > 72) room.animals = room.animals.filter(a => a.pred || a.state !== 'dead').slice(-64);
+  if (room.animals.length > 72) { const keep = a => a.pred || a.state !== 'dead' || (a.by && !a.tagged && (a.deadT || 0) < CARCASS_MS / 1000);
+    const live = room.animals.filter(keep); room.animals = live.length > 80 ? live.slice(-80) : live; }
 }
 function startMatch(room) {
   room.phase = 'live';
@@ -1898,7 +1899,16 @@ wss.on('connection', (ws, req) => {
       } else {
         const asked = String(m.room || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
         // no room asked for (or the old default) = quick match: find live hunters
-        const roomName = (!asked || asked === 'RIDGE') ? pickPublicRoom(defense) : (defense ? 'D_' : '') + asked;
+        // Coming back from a dropped connection? Go back to the match you were
+        // in, wherever it is - quick match used to pick a room afresh, which
+        // could be a different one, and "back in the match" started you at zero.
+        const rkey = String(m.resume || '');
+        let back = null;
+        if (user || rkey) for (const r of rooms.values()) {
+          if (r.party || !!isDefense(r) !== !!defense) continue;
+          if ([...r.players.values()].some(q => q.gone && !q.bot && (user ? (q.user && q.user.name === user.name) : (q.resumeKey && q.resumeKey === rkey)))) { back = r.name; break; }
+        }
+        const roomName = back || ((!asked || asked === 'RIDGE') ? pickPublicRoom(defense) : (defense ? 'D_' : '') + asked);
         room = getRoom(roomName);
         if (defense && !room.mode) { room.mode = 'defense'; room.wave = 0; }
       }
@@ -1997,7 +2007,6 @@ wss.on('connection', (ws, req) => {
       if (room.phase !== 'wave') { send(ws, { t: 'shotResult', ok: false, why: room.phase === 'break' ? 'Between waves — spend your points' : 'Not yet' }); return; }
       const r = defShot(room, p, m); if (r.ok) p.lastShot = room.time;
       send(ws, { t: 'shotResult', ...r, pts: p.pts | 0 });
-      if (r.hit && r.hit.killed && r.hit.species) broadcast(room, { t: 'feed', name: p.name, text: 'dropped a ' + r.hit.species }, p.id);
       return;
     }
     if (m.t === 'buy' && isDefense(room)) { send(ws, { t: 'bought', ...defBuy(room, p, String(m.item || '')) }); return; }
